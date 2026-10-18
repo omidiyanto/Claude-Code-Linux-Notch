@@ -51,7 +51,14 @@ jobs:
 
       - uses: taiki-e/install-action@v2
         with:
-          tool: cargo-audit,actionlint
+          tool: cargo-audit
+
+      # Not packaged for install-action; Go is preinstalled on the runner, and go install checks
+      # the module against Go's checksum database.
+      - name: actionlint
+        run: |
+          go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
 
       - name: scripts/check.sh
         run: scripts/check.sh
