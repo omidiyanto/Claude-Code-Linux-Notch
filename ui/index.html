@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Claude Notch</title>
+    <link rel="stylesheet" href="notch.css" />
+    <script type="module" src="app.js"></script>
+  </head>
+  <body>
+    <main id="island" class="island" data-mode="idle" role="status" aria-live="polite">
+      <canvas id="buddy" width="17" height="16" aria-hidden="true"></canvas>
+      <div class="text">
+        <div id="status" class="status"></div>
+        <div id="title" class="title"></div>
+        <div id="detail" class="detail"></div>
+      </div>
+      <div id="wave" class="wave" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i></div>
+      <div class="actions">
+        <button type="button" class="deny" data-action="deny">Deny</button>
+        <button type="button" class="allow" data-action="allow">Allow</button>
+      </div>
+      <div class="tools">
+        <button type="button" class="gear" data-action="settings" aria-label="Settings" title="Settings">
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path
+              d="M19.14 12.94c.04-.3.06-.61.06-.94s-.02-.64-.07-.94l2.03-1.58a.5.5 0 0 0 .12-.61l-1.92-3.32a.5.5 0 0 0-.59-.22l-2.39.96a7 7 0 0 0-1.62-.94l-.36-2.54a.5.5 0 0 0-.48-.41h-3.84a.5.5 0 0 0-.47.41l-.36 2.54a7 7 0 0 0-1.62.94l-2.39-.96a.5.5 0 0 0-.59.22L2.74 8.87a.5.5 0 0 0 .12.61l2.03 1.58c-.05.3-.09.63-.09.94s.02.64.07.94l-2.03 1.58a.5.5 0 0 0-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.24.41.48.41h3.84c.24 0 .44-.17.47-.41l.36-2.54a7 7 0 0 0 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32a.5.5 0 0 0-.12-.61zM12 15.6a3.6 3.6 0 1 1 0-7.2 3.6 3.6 0 0 1 0 7.2z"
+            />
+          </svg>
+        </button>
+        <button type="button" class="close" data-action="cancel" aria-label="Cancel" title="Cancel">✕</button>
+      </div>
+    </main>
+  </body>
+</html>

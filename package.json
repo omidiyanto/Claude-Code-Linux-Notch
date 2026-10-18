@@ -1,0 +1,15 @@
+{
+  "name": "claude-notch-ui",
+  "private": true,
+  "type": "module",
+  "description": "Lint and tests for the notch page (ui/). The app itself needs no npm.",
+  "scripts": {
+    "lint": "eslint --max-warnings 0 ui tests/ui eslint.config.js",
+    "test": "node --test tests/ui/"
+  },
+  "devDependencies": {
+    "@eslint/js": "10.0.1",
+    "eslint": "10.13.0",
+    "globals": "17.13.0"
+  }
+}

@@ -1,0 +1,240 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Claude Notch · Settings</title>
+    <link rel="stylesheet" href="settings.css" />
+    <script type="module" src="settings.js"></script>
+  </head>
+  <body>
+    <div class="app">
+      <nav class="sidebar" aria-label="Settings sections">
+        <div class="brand">
+          <canvas id="logo" width="17" height="14" aria-hidden="true"></canvas>
+          <div>
+            <strong>Claude Notch</strong>
+            <small id="version"></small>
+          </div>
+        </div>
+        <button type="button" class="tab" data-tab="claude" aria-current="page">Claude</button>
+        <button type="button" class="tab" data-tab="personality">Personality</button>
+        <button type="button" class="tab" data-tab="voice">Voice &amp; notch</button>
+        <button type="button" class="tab" data-tab="history">History</button>
+        <button type="button" class="tab" data-tab="about">Data &amp; about</button>
+      </nav>
+
+      <main>
+        <div id="restart-banner" class="banner" hidden>
+          <span>Some changes take effect after the notch restarts.</span>
+          <button type="button" class="primary" data-restart>Restart now</button>
+        </div>
+
+        <!-- Claude -->
+        <section id="tab-claude" class="panel">
+          <h1>Claude</h1>
+          <p class="lead">
+            Saved straight into Claude Code's own settings files, the same ones <code>claude</code> in your terminal
+            uses. Only the keys you change are written; everything else is left as it is, and a backup is made before
+            saving.
+          </p>
+
+          <div class="scope" role="radiogroup" aria-label="Applies to">
+            <label class="scope-option">
+              <input type="radio" name="scope" value="voice" checked />
+              <span>
+                <b>Voice commands only</b>
+                <small id="voice-path"></small>
+              </span>
+            </label>
+            <label class="scope-option">
+              <input type="radio" name="scope" value="user" />
+              <span>
+                <b>All Claude Code sessions</b>
+                <small id="user-path"></small>
+              </span>
+            </label>
+          </div>
+
+          <div id="claude-error" class="error" hidden></div>
+
+          <div class="card">
+            <h2>Permission mode</h2>
+            <div id="modes" class="choices" role="radiogroup" aria-label="Permission mode"></div>
+            <p id="mode-note" class="note" hidden>
+              Claude Code only takes <b>Auto</b> mode from the "All Claude Code sessions" settings. Pick that scope to
+              turn it on.
+            </p>
+          </div>
+
+          <div class="card grid-2 model-effort">
+            <label>
+              <span class="label">Model</span>
+              <select id="model"></select>
+              <input id="model-custom" type="text" placeholder="e.g. claude-opus-5-5" spellcheck="false" hidden />
+            </label>
+            <div>
+              <span class="label">Effort</span>
+              <div id="efforts" class="segmented" role="radiogroup" aria-label="Effort"></div>
+              <small class="hint">Low suits short, quick desktop commands.</small>
+            </div>
+          </div>
+
+          <details class="card">
+            <summary>Advanced: permission rules (<code>permissions.allow</code>)</summary>
+            <p class="hint">
+              One rule per line, in Claude Code's syntax (e.g. <code>Bash(playerctl:*)</code>). Never add a generic
+              launcher such as <code>Bash(bash:*)</code> or <code>Bash(setsid:*)</code>: it would let any command
+              through without review.
+            </p>
+            <textarea id="allow" rows="6" spellcheck="false"></textarea>
+          </details>
+
+          <div class="actions">
+            <button type="button" class="primary" id="save-claude">Save</button>
+            <button type="button" id="open-claude-file">Open file</button>
+          </div>
+
+          <div class="card effective">
+            <h2>What voice commands use right now</h2>
+            <dl id="effective"></dl>
+          </div>
+
+          <div class="card">
+            <h2>Claude Code connectivity test</h2>
+            <p class="hint">One small question without tools, with the saved voice settings.</p>
+            <button type="button" id="test">Run test</button>
+            <dl id="test-result" class="result" hidden></dl>
+          </div>
+        </section>
+
+        <!-- Personality -->
+        <section id="tab-personality" class="panel" hidden>
+          <h1>Personality</h1>
+          <p class="lead">
+            This is the <code>CLAUDE.md</code> of the voice workspace. Claude reads it on every voice command: how to
+            talk, what to call you, your preferences and personal shortcuts.
+          </p>
+          <textarea id="personality" class="editor" rows="18" spellcheck="false"></textarea>
+          <p class="hint">
+            For example: <i>"Call me Boss. Answer casually, with a bit of humour."</i>,
+            <i>"my mix → https://www.youtube.com/watch?v=…"</i>
+          </p>
+          <div class="actions">
+            <button type="button" class="primary" id="save-personality">Save</button>
+            <button type="button" data-open="personality">Open in editor</button>
+          </div>
+        </section>
+
+        <!-- Voice & notch -->
+        <section id="tab-voice" class="panel" hidden>
+          <h1>Voice &amp; notch</h1>
+          <p class="lead">Settings of the notch itself, saved in <code id="config-path"></code>.</p>
+
+          <div class="card grid-2">
+            <label>
+              <span class="label">Wake phrases <em class="restart">needs a restart</em></span>
+              <textarea id="wake" rows="5" spellcheck="false"></textarea>
+              <small class="hint">One per line, 1–4 words.</small>
+            </label>
+            <div class="stack">
+              <label>
+                <span class="label">Spoken language <em class="restart">needs a restart</em></span>
+                <select id="language">
+                  <option value="auto">Automatic: English or Indonesian</option>
+                  <option value="en">English</option>
+                  <option value="id">Indonesian</option>
+                </select>
+              </label>
+              <label>
+                <span class="label">Speech-to-text model <em class="restart">needs a restart</em></span>
+                <select id="speech-model"></select>
+                <small class="hint">
+                  Best: <b>large-v3-turbo</b> on a GPU (the Vulkan build). Download it with
+                  <code>scripts/download-model.sh large-v3-turbo-q5_0</code>
+                </small>
+              </label>
+            </div>
+          </div>
+
+          <div class="card grid-2">
+            <label>
+              <span class="label">Microphone sensitivity <em class="restart">needs a restart</em></span>
+              <input id="vad" type="range" min="0.004" max="0.06" step="0.001" />
+              <small class="hint range-ends"><span>More sensitive</span><span id="vad-value"></span><span>Noisy room</span></small>
+            </label>
+            <div class="stack">
+              <label>
+                <span class="label">Follow-up window (seconds)</span>
+                <input id="follow-up" type="number" min="0" max="600" step="5" />
+                <small class="hint">Speak again without the wake phrase after an answer. 0 turns it off.</small>
+              </label>
+              <label>
+                <span class="label">Time limit per command (seconds)</span>
+                <input id="timeout" type="number" min="10" max="3600" step="10" />
+              </label>
+            </div>
+          </div>
+
+          <div class="card grid-2">
+            <label class="switch">
+              <input id="sounds" type="checkbox" />
+              <span>Sound effects</span>
+            </label>
+            <div class="row">
+              <span>Notch position: drag the notch to move it.</span>
+              <button type="button" id="reset-position">Back to the top centre</button>
+            </div>
+          </div>
+
+          <details class="card">
+            <summary>Advanced</summary>
+            <label>
+              <span class="label">Claude Code command <em class="restart">needs a restart</em></span>
+              <input id="claude-bin" type="text" spellcheck="false" />
+            </label>
+          </details>
+
+          <div class="actions">
+            <button type="button" class="primary" id="save-notch">Save</button>
+          </div>
+        </section>
+
+        <!-- History -->
+        <section id="tab-history" class="panel" hidden>
+          <h1>History</h1>
+          <p class="lead">
+            Your voice commands, read from Claude Code's transcripts. Continue any of them in a terminal with
+            <code>claude --resume</code>.
+          </p>
+          <div class="actions">
+            <button type="button" id="reload-history">Reload</button>
+            <button type="button" class="danger" id="delete-history">Delete all voice history</button>
+            <button type="button" data-open="history">Open folder</button>
+          </div>
+          <p id="history-empty" class="empty" hidden>No voice commands yet.</p>
+          <ul id="history" class="history"></ul>
+        </section>
+
+        <!-- About -->
+        <section id="tab-about" class="panel" hidden>
+          <h1>Data &amp; about</h1>
+          <div class="card">
+            <dl id="paths" class="paths"></dl>
+          </div>
+          <div class="card">
+            <h2>Privacy</h2>
+            <p class="hint">
+              Audio is processed on this computer and never stored. Only the text of a command goes to Claude.
+              Backups of Claude Code settings changed from here are in the Backups folder.
+            </p>
+          </div>
+          <div class="actions">
+            <button type="button" data-restart>Restart the notch</button>
+          </div>
+        </section>
+      </main>
+    </div>
+    <div id="toast" class="toast" role="status" aria-live="polite"></div>
+  </body>
+</html>

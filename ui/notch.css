@@ -1,0 +1,352 @@
+:root {
+  --bg: #0b0b0c;
+  --text: #f4efe9;
+  --dim: #a29c95;
+  --accent: #d97757;
+  --danger: #ff7a6b;
+  --spring: cubic-bezier(0.34, 1.56, 0.64, 1);
+  color-scheme: dark;
+}
+
+html,
+body {
+  margin: 0;
+  height: 100%;
+  background: transparent;
+  overflow: hidden;
+  font: 13px/1.35 system-ui, sans-serif;
+  color: var(--text);
+  user-select: none;
+  cursor: default;
+}
+
+/* Flat top flush with the screen edge, rounded bottom: a notch. The page sets left and top. */
+.island {
+  position: absolute;
+  top: 0;
+  left: 50%;
+  transform: translateX(-50%);
+  touch-action: none;
+  box-sizing: border-box;
+  display: grid;
+  grid-template-columns: 1fr;
+  grid-template-rows: 1fr auto;
+  justify-items: center;
+  align-items: center;
+  column-gap: 10px;
+  width: 132px;
+  height: 34px;
+  padding: 0 14px 2px;
+  background: var(--bg);
+  border-radius: 0 0 18px 18px;
+  box-shadow: 0 6px 18px rgb(0 0 0 / 0.35);
+  overflow: hidden;
+  transition:
+    width 0.45s var(--spring),
+    height 0.45s var(--spring),
+    border-radius 0.45s var(--spring),
+    opacity 0.3s;
+}
+
+#buddy {
+  grid-column: 1;
+  grid-row: 1 / -1;
+  width: 34px;
+  height: 32px;
+  image-rendering: pixelated;
+  transition:
+    width 0.45s var(--spring),
+    height 0.45s var(--spring),
+    filter 0.3s;
+}
+
+.text,
+.wave,
+.actions,
+.tools {
+  display: none;
+}
+
+/* Explicit cells: auto-placement would push the close button under the approval buttons. */
+.text {
+  grid-area: 1 / 2;
+  min-width: 0;
+}
+
+.wave {
+  grid-area: 1 / 3;
+}
+
+.tools {
+  grid-area: 1 / 4;
+  align-self: start;
+  gap: 6px;
+  margin-top: 6px;
+}
+
+/* Resting: the gear shows on hover, at the right end of the pill. */
+.island:is([data-mode='idle'], [data-mode='sleep'], [data-mode='paused']):hover .tools {
+  display: flex;
+  position: absolute;
+  right: 8px;
+  top: 50%;
+  margin: 0;
+  transform: translateY(-50%);
+}
+
+.island:is([data-mode='idle'], [data-mode='sleep'], [data-mode='paused']) .close {
+  display: none;
+}
+
+.island:is([data-mode='sleep'], [data-mode='paused']):hover {
+  width: 130px;
+}
+
+/* Away from the top edge: a floating island, rounded all around. */
+.island.floating[data-mode] {
+  border-radius: 22px;
+  box-shadow: 0 10px 30px rgb(0 0 0 / 0.45);
+}
+
+.island.dragging {
+  cursor: grabbing;
+  transition: none;
+}
+
+.status {
+  color: var(--accent);
+  font-weight: 600;
+  font-size: 12px;
+}
+
+.title {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-weight: 500;
+}
+
+.detail {
+  color: var(--dim);
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+}
+
+/* Resting: just the buddy. */
+.island[data-mode='idle']:hover {
+  width: 150px;
+  height: 38px;
+}
+
+.island[data-mode='sleep'] {
+  width: 112px;
+}
+
+.island[data-mode='paused'] {
+  width: 112px;
+  opacity: 0.75;
+}
+
+.island[data-mode='paused'] #buddy {
+  filter: grayscale(1);
+}
+
+.island.follow-up[data-mode='idle']::after,
+.island.follow-up[data-mode='done']::after {
+  content: '';
+  position: absolute;
+  right: 10px;
+  top: 10px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent);
+  animation: pulse 1.4s ease-in-out infinite;
+}
+
+@keyframes pulse {
+  50% {
+    opacity: 0.25;
+  }
+}
+
+/* Awake: the buddy grows, text and controls appear. */
+.island:is(
+    [data-mode='listening'],
+    [data-mode='transcribing'],
+    [data-mode='thinking'],
+    [data-mode='working'],
+    [data-mode='approval'],
+    [data-mode='done'],
+    [data-mode='error']
+  ) {
+  grid-template-columns: auto 1fr auto auto;
+  justify-items: stretch;
+  width: 380px;
+  height: 66px;
+  border-radius: 0 0 24px 24px;
+  padding: 4px 16px 8px;
+}
+
+.island:is(
+    [data-mode='listening'],
+    [data-mode='transcribing'],
+    [data-mode='thinking'],
+    [data-mode='working'],
+    [data-mode='approval'],
+    [data-mode='done'],
+    [data-mode='error']
+  )
+  .text {
+  display: block;
+}
+
+.island:is(
+    [data-mode='listening'],
+    [data-mode='transcribing'],
+    [data-mode='thinking'],
+    [data-mode='working'],
+    [data-mode='approval'],
+    [data-mode='done'],
+    [data-mode='error']
+  )
+  .tools {
+  display: flex;
+}
+
+.island:is(
+    [data-mode='listening'],
+    [data-mode='transcribing'],
+    [data-mode='thinking'],
+    [data-mode='working'],
+    [data-mode='approval'],
+    [data-mode='done'],
+    [data-mode='error']
+  )
+  #buddy {
+  width: 51px;
+  height: 48px;
+}
+
+.island:is([data-mode='listening'], [data-mode='transcribing']) .wave {
+  display: flex;
+}
+
+/* The live caption may take two lines; the app already keeps its newest words. */
+.island:is([data-mode='listening'], [data-mode='transcribing']) .title {
+  white-space: normal;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  font-size: 12px;
+}
+
+.island:is([data-mode='done'], [data-mode='error']) {
+  width: 440px;
+  height: 92px;
+}
+
+.island[data-mode='error'] .status {
+  color: var(--danger);
+}
+
+.island[data-mode='approval'] {
+  width: 460px;
+  height: 180px;
+  align-items: start;
+  padding-top: 10px;
+}
+
+.island[data-mode='approval'] .detail {
+  -webkit-line-clamp: 4;
+  margin-top: 4px;
+  padding: 6px 8px;
+  border-radius: 8px;
+  background: rgb(255 255 255 / 0.06);
+  color: var(--text);
+  font: 12px/1.4 ui-monospace, monospace;
+}
+
+.island[data-mode='approval'] .actions {
+  display: flex;
+  grid-column: 2 / -1;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.wave {
+  align-items: center;
+  gap: 3px;
+  height: 22px;
+}
+
+.wave i {
+  display: block;
+  width: 3px;
+  height: 3px;
+  border-radius: 2px;
+  background: var(--accent);
+  transition: height 0.08s linear;
+}
+
+button {
+  font: inherit;
+  color: var(--text);
+  border: 0;
+  border-radius: 999px;
+  cursor: pointer;
+}
+
+button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.actions button {
+  padding: 5px 16px;
+  font-weight: 600;
+}
+
+.deny {
+  background: rgb(255 255 255 / 0.12);
+}
+
+.allow {
+  background: var(--accent);
+  color: #1a0f0b;
+}
+
+.tools button {
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  font-size: 11px;
+  background: rgb(255 255 255 / 0.1);
+}
+
+.gear svg {
+  width: 14px;
+  height: 14px;
+  fill: var(--dim);
+}
+
+.gear:hover svg {
+  fill: var(--text);
+}
+
+.tools button:hover,
+.deny:hover {
+  background: rgb(255 255 255 / 0.2);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .island,
+  #buddy {
+    transition: none;
+  }
+}

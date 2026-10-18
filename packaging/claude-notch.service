@@ -1,0 +1,30 @@
+# systemd user service for Claude Notch. Install: see README, "Run as a systemd service".
+[Unit]
+Description=Claude Notch: voice dynamic island for Claude Code
+Documentation=https://code.claude.com/docs
+# Starts with the desktop session and stops with it.
+PartOf=graphical-session.target
+After=graphical-session.target pipewire.service
+Wants=pipewire.service
+# A broken config fails fast; stop retrying after 5 failures in a minute.
+StartLimitIntervalSec=60
+StartLimitBurst=5
+
+[Service]
+Type=simple
+ExecStart=%h/.local/bin/claude-notch
+# systemd's PATH lacks ~/.local/bin, where Claude Code installs `claude`.
+Environment=PATH=%h/.local/bin:%h/.cargo/bin:/usr/local/bin:/usr/bin:/bin
+Restart=on-failure
+RestartSec=2
+# "Restart" in the settings window exits with 75: start again, and don't count it as a failure.
+RestartForceExitStatus=75
+SuccessExitStatus=75
+# Apps opened by voice (Firefox, a "let's code" Konsole) land in this service's cgroup. With
+# the default KillMode they would be killed on every stop or restart. The notch handles SIGTERM
+# itself: it stops a running `claude -p` and its process group, and leaves those apps alone.
+KillMode=process
+TimeoutStopSec=10
+
+[Install]
+WantedBy=graphical-session.target

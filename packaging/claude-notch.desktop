@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Claude Notch
+Comment=A dynamic island that hands your voice to Claude Code
+Exec=claude-notch
+Icon=claude-notch
+Terminal=false
+Categories=Utility;
+X-GNOME-Autostart-enabled=true
+X-KDE-autostart-phase=2

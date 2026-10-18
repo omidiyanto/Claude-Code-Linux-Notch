@@ -1,0 +1,56 @@
+[package]
+name = "claude-notch"
+version = "0.3.0"
+edition = "2024"
+rust-version = "1.88"
+license = "MIT"
+description = "A dynamic-island notch for Linux desktops that hands your voice to Claude Code"
+publish = false
+
+[features]
+# GPU speech recognition, passed straight to whisper.cpp.
+cuda = ["whisper-rs/cuda"]
+vulkan = ["whisper-rs/vulkan"]
+
+[dependencies]
+tauri = { version = "2.12", features = [] }
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", features = ["preserve_order"] }
+toml = "1"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "process", "net", "io-util", "sync", "time", "signal"] }
+cpal = "0.18"
+whisper-rs = "0.16"
+# ggml's device list, to pick the dedicated GPU (already built for whisper-rs).
+whisper-rs-sys = "0.15"
+libc = "0.2"
+# Same GTK 3 that Tauri runs on, to turn its window into a layer-shell surface.
+gtk = "0.18"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[lints.rust]
+unsafe_op_in_unsafe_fn = "deny"
+unused_must_use = "deny"
+
+[lints.clippy]
+all = { level = "deny", priority = -1 }
+pedantic = { level = "deny", priority = -1 }
+# Audio and UI geometry convert between f32/f64/usize/i32 everywhere; each cast is bounded where it happens.
+cast_precision_loss = "allow"
+cast_possible_truncation = "allow"
+cast_sign_loss = "allow"
+# Private binary crate: no public API docs to keep.
+missing_errors_doc = "allow"
+missing_panics_doc = "allow"
+must_use_candidate = "allow"
+module_name_repetitions = "allow"
+unwrap_used = "deny"
+dbg_macro = "deny"
+print_stdout = "deny"
+todo = "deny"
+
+[profile.release]
+lto = true
+codegen-units = 1
+strip = true

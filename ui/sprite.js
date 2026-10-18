@@ -1,0 +1,216 @@
+// The pixel buddy: a Claude-orange critter with a little spark on its head, drawn in code on a
+// 17×14 grid. frame() is a pure function of (mode, time, options), so tests can check every look.
+
+export const W = 17;
+export const H = 14;
+
+export const COLORS = Object.freeze({
+  body: '#d97757',
+  shade: '#b4573a',
+  light: '#f0a383',
+  eye: '#2b1b17',
+  glint: '#ffffff',
+  blush: '#f28c8c',
+  spark: '#ffd7a8',
+  sparkHot: '#ffffff',
+  zzz: '#bcd4ff',
+});
+
+const BODY = { x0: 2, x1: 14, y0: 3, y1: 10 };
+// Left eye columns 4–5, right 11–12: mirror images around column 8.
+const EYES = [4, 11];
+const LEGS = [3, 5, 11, 13];
+
+const step = (t, hz) => Math.floor(t * hz);
+
+class Grid {
+  constructor() {
+    this.cells = new Map();
+  }
+
+  set(x, y, color) {
+    if (x >= 0 && x < W && y >= 0 && y < H) this.cells.set(y * W + x, color);
+  }
+
+  pixels() {
+    return [...this.cells].map(([key, color]) => [key % W, Math.floor(key / W), color]);
+  }
+}
+
+function body(g) {
+  for (let y = BODY.y0; y <= BODY.y1; y++) {
+    for (let x = BODY.x0; x <= BODY.x1; x++) {
+      const corner = (x === BODY.x0 || x === BODY.x1) && (y === BODY.y0 || y === BODY.y1);
+      if (corner) continue;
+      let color = COLORS.body;
+      if (y === BODY.y0) color = COLORS.light;
+      else if (y === BODY.y1 || x === BODY.x1) color = COLORS.shade;
+      g.set(x, y, color);
+    }
+  }
+}
+
+function arms(g, leftUp, rightUp) {
+  for (const [x, up] of [[0, leftUp], [15, rightUp]]) {
+    const y = up ? 4 : 6;
+    g.set(x, y, COLORS.body);
+    g.set(x + 1, y, COLORS.body);
+    g.set(x, y + 1, COLORS.shade);
+    g.set(x + 1, y + 1, COLORS.shade);
+  }
+}
+
+// phase 0: all legs down; 1 and 2: alternate pairs lifted, for walking.
+function legs(g, phase) {
+  LEGS.forEach((x, i) => {
+    g.set(x, 11, COLORS.shade);
+    if (phase === 0 || i % 2 !== phase - 1) g.set(x, 12, COLORS.shade);
+  });
+}
+
+function spark(g, twinkle) {
+  const plus = [[8, 0], [7, 1], [8, 1], [9, 1], [8, 2]];
+  const cross = [[7, 0], [9, 0], [8, 1], [7, 2], [9, 2]];
+  for (const [x, y] of twinkle ? cross : plus) g.set(x, y, twinkle ? COLORS.sparkHot : COLORS.spark);
+}
+
+function eyes(g, style, dx, dy) {
+  for (const [i, x0] of EYES.entries()) {
+    const x = x0 + dx;
+    const left = i === 0;
+    switch (style) {
+      case 'closed':
+        g.set(x, 6, COLORS.eye);
+        g.set(x + 1, 6, COLORS.eye);
+        break;
+      case 'happy': // ^ ^
+        g.set(x - 1, 6, COLORS.eye);
+        g.set(x, 5, COLORS.eye);
+        g.set(x + 1, 5, COLORS.eye);
+        g.set(x + 2, 6, COLORS.eye);
+        break;
+      case 'x': {
+        const a = left ? 4 : 10;
+        for (const [px, py] of [[a, 4], [a + 2, 4], [a + 1, 5], [a, 6], [a + 2, 6]]) g.set(px, py, COLORS.eye);
+        break;
+      }
+      case 'squint': {
+        // > <
+        const tip = left ? x + 1 : x;
+        const back = left ? x : x + 1;
+        g.set(back, 4, COLORS.eye);
+        g.set(tip, 5, COLORS.eye);
+        g.set(back, 6, COLORS.eye);
+        break;
+      }
+      default: {
+        const top = (style === 'wide' ? 4 : 5) + dy;
+        for (let y = top; y <= 6 + dy; y++) {
+          g.set(x, y, COLORS.eye);
+          g.set(x + 1, y, COLORS.eye);
+        }
+        g.set(x, top, COLORS.glint);
+      }
+    }
+  }
+}
+
+function mouth(g, style) {
+  const shapes = {
+    smile: [[6, 8], [7, 9], [8, 9], [9, 9], [10, 8]],
+    o: [[8, 8]],
+    flat: [[7, 9], [8, 9], [9, 9]],
+  };
+  for (const [x, y] of shapes[style] ?? []) g.set(x, y, COLORS.eye);
+}
+
+function zzz(g, t) {
+  if (step(t, 1.5) % 3 === 2) return;
+  const oy = step(t, 1.5) % 3;
+  for (const [x, y] of [[0, 0], [1, 0], [2, 0], [1, 1], [0, 2], [1, 2], [2, 2]]) g.set(14 + x, y + 1 - oy, COLORS.zzz);
+}
+
+/**
+ * @param {string} mode notch mode: idle, sleep, paused, listening, transcribing, thinking,
+ *   working, approval, done, error. Anything else looks idle.
+ * @param {number} t seconds since start
+ * @param {{blink?: boolean, look?: number, poke?: boolean, level?: number}} opt
+ * @returns {{pixels: Array<[number, number, string]>, dx: number, dy: number}}
+ */
+export function frame(mode, t, opt = {}) {
+  const { blink = false, look = 0, poke = false, level = 0 } = opt;
+  const g = new Grid();
+  let leftUp = false;
+  let rightUp = false;
+  let legPhase = 0;
+  let dx = 0;
+  let dy = 0;
+  let eyeStyle = 'open';
+  let mouthStyle = null;
+  let eyeX = Math.max(-1, Math.min(1, Math.round(look)));
+  let eyeY = 0;
+  let twinkle = false;
+
+  switch (mode) {
+    case 'listening':
+    case 'transcribing':
+      eyeStyle = 'wide';
+      mouthStyle = 'o';
+      leftUp = rightUp = mode === 'transcribing' ? step(t, 4) % 2 === 0 : level > 0.04;
+      break;
+    case 'thinking':
+      eyeX = 1;
+      eyeY = -1;
+      dy = step(t, 2) % 2;
+      twinkle = step(t, 4) % 2 === 1;
+      break;
+    case 'working':
+      legPhase = 1 + (step(t, 6) % 2);
+      leftUp = step(t, 6) % 2 === 0;
+      rightUp = !leftUp;
+      twinkle = step(t, 6) % 2 === 1;
+      break;
+    case 'approval':
+      eyeStyle = 'wide';
+      mouthStyle = 'o';
+      rightUp = step(t, 3) % 2 === 0;
+      break;
+    case 'done':
+      eyeStyle = 'happy';
+      mouthStyle = 'smile';
+      dy = t % 0.8 < 0.2 ? -1 : 0;
+      leftUp = rightUp = dy < 0;
+      break;
+    case 'error':
+      eyeStyle = 'x';
+      mouthStyle = 'flat';
+      dx = t % 1.5 < 0.4 ? step(t, 12) % 2 : 0;
+      break;
+    case 'sleep':
+    case 'paused':
+      eyeStyle = 'closed';
+      dy = 1;
+      break;
+    default:
+      dy = step(t, 1 / 1.4) % 2; // breathing
+  }
+  if (poke) {
+    eyeStyle = 'squint';
+    mouthStyle = 'o';
+  } else if (blink && (eyeStyle === 'open' || eyeStyle === 'wide')) {
+    eyeStyle = 'closed';
+  }
+
+  body(g);
+  arms(g, leftUp, rightUp);
+  legs(g, legPhase);
+  spark(g, twinkle);
+  if (eyeStyle !== 'x') {
+    g.set(3, 8, COLORS.blush);
+    g.set(13, 8, COLORS.blush);
+  }
+  eyes(g, eyeStyle, eyeStyle === 'open' || eyeStyle === 'wide' ? eyeX : 0, eyeY);
+  mouth(g, mouthStyle);
+  if (mode === 'sleep') zzz(g, t);
+  return { pixels: g.pixels(), dx, dy };
+}

@@ -1,0 +1,135 @@
+# Lint and test every push and pull request; on a v* tag, build the release binaries and publish
+# them, so users can install without building (scripts/install.sh downloads them).
+name: CI
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref_type != 'tag' }}
+
+env:
+  CARGO_TERM_COLOR: always
+  # Build whisper.cpp for a baseline x86-64 CPU (AVX2) instead of the CI machine's own CPU, or
+  # the binaries could crash with "illegal instruction" on users' computers.
+  GGML_NATIVE: "OFF"
+  BUILD_PACKAGES: >-
+    libwebkit2gtk-4.1-dev libgtk-layer-shell-dev libasound2-dev
+    cmake clang libclang-dev pkg-config
+
+jobs:
+  check:
+    name: Lint and test
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: System packages
+        run: |
+          sudo apt-get update
+          # shellcheck disable=SC2086 # BUILD_PACKAGES is a word list
+          sudo apt-get install -y --no-install-recommends $BUILD_PACKAGES shellcheck desktop-file-utils
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - uses: Swatinem/rust-cache@v2
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-audit,actionlint
+
+      - name: scripts/check.sh
+        run: scripts/check.sh
+
+  build:
+    name: Build (${{ matrix.variant }})
+    needs: check
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - variant: cpu
+            features: ""
+            packages: ""
+          - variant: vulkan
+            features: --features vulkan
+            packages: libvulkan-dev glslc
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: System packages
+        env:
+          EXTRA: ${{ matrix.packages }}
+        run: |
+          sudo apt-get update
+          # shellcheck disable=SC2086 # word lists
+          sudo apt-get install -y --no-install-recommends $BUILD_PACKAGES $EXTRA
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.variant }}
+
+      - name: Build
+        # matrix.features is a fixed value from this file: empty, or --features vulkan.
+        run: cargo build --release --locked ${{ matrix.features }}
+
+      - name: Package
+        run: scripts/package.sh "${{ matrix.variant }}" target/release/claude-notch dist
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: claude-notch-${{ matrix.variant }}
+          path: dist/*.tar.gz
+          if-no-files-found: error
+
+  release:
+    name: Publish the release
+    if: github.ref_type == 'tag'
+    needs: build
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: The tag matches Cargo.toml
+        run: |
+          version="$(sed -n 's/^version = "\(.*\)"$/\1/p' Cargo.toml | head -n 1)"
+          if [ "$GITHUB_REF_NAME" != "v$version" ]; then
+            echo "::error::Tag $GITHUB_REF_NAME does not match version $version in Cargo.toml"
+            exit 1
+          fi
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Checksums
+        working-directory: dist
+        run: sha256sum ./*.tar.gz | sed 's| \./| |' > SHA256SUMS && cat SHA256SUMS
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/*.tar.gz
+            dist/SHA256SUMS
+          generate_release_notes: true
