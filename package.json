@@ -5,7 +5,7 @@
   "description": "Lint and tests for the notch page (ui/). The app itself needs no npm.",
   "scripts": {
     "lint": "eslint --max-warnings 0 ui tests/ui eslint.config.js",
-    "test": "node --test tests/ui/"
+    "test": "node --test \"tests/ui/*.test.js\""
   },
   "devDependencies": {
     "@eslint/js": "10.0.1",
