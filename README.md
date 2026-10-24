@@ -12,9 +12,7 @@ Say **"Hi Claude"**, then a command such as *"open YouTube and play my mix"* or 
 - **Browser control** through Claude in Chrome, when you turned it on with `/chrome`.
 - **Settings window** (the ⚙ on the notch): permission mode, model, effort, a connectivity test, personality, history, and the notch itself. Drag the notch anywhere; away from the top edge it becomes a floating island.
 
-<video src="docs/Demo.mp4" controls muted width="100%">
-  <a href="docs/Demo.mp4">Watch the demo</a>
-</video>
+https://github.com/user-attachments/assets/ddc08e6e-1b99-4687-8025-664f37ad7df1
 
 Docs: [product requirements](docs/PRD.md) · [architecture and measured decisions](docs/ARCHITECTURE.md)
 
