@@ -217,6 +217,12 @@ Environment variables: `CLAUDE_NOTCH_DEBUG=1` (log transcripts), `CLAUDE_NOTCH_L
 - Only one monitor: the notch appears where the compositor puts it (usually the primary or focused monitor). Dragging moves it within that monitor.
 - Approvals offer Allow/Deny only, with no "Always allow"; add permanent rules to `permissions.allow` in the Claude tab instead.
 
+## Contributing
+
+This project is open to contributions from anyone. Fork it, make your change, and open a pull request: pull requests are welcome and get merged. Any idea or innovation is welcome too, from a bug fix or a new wake phrase to a whole new feature; if you are not sure where to start, open an issue and describe it.
+
+Before opening a pull request, run `scripts/check.sh` (see [Development](#development)) and make sure it passes: CI runs the same checks.
+
 ## Credits
 
 The layer-shell and input-region approach is adapted from [Coucou](https://github.com/Louis-CFM/coucou) by Louis Raillé (MIT). No Coucou/Mochi assets are used: the character, sounds and icon here are generated in code. Claude and Claude Code are trademarks of Anthropic; this is a personal project, not affiliated with Anthropic.
