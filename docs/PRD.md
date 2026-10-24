@@ -34,7 +34,7 @@ terminal UI of Claude Code.
 
 ## 3. Persona and scenarios
 
-**Persona:** a Linux developer who uses Claude Code daily and speaks English, Indonesian, or both.
+**Persona:** a Linux developer who uses Claude Code daily and speaks English.
 
 | # | The user says / does | What happens |
 |---|---|---|
@@ -54,7 +54,7 @@ terminal UI of Claude Code.
 |---|---|---|
 | F1 | A notch above every window, centred at the top, clicks outside the pill pass through, smooth spring animations between sizes | ✅ |
 | F2 | A procedurally drawn pixel character with states: idle, listening, transcribing, thinking, working, approval, done, error, sleep, paused | ✅ |
-| F3 | Always-on wake phrase ("hi/hey/hai/halo Claude", configurable), local speech recognition, English and Indonesian, live captions, follow-up window | ✅ |
+| F3 | Always-on wake phrase ("hi/hey/hello Claude", configurable), local speech recognition in English, live captions, follow-up window | ✅ |
 | F4 | Each command runs Claude Code headless in a private voice workspace; one conversation per run of the notch | ✅ |
 | F5 | Claude's model, effort, permission mode and rules come from Claude Code's own settings files (user scope, plus a voice-only project scope) | ✅ |
 | F6 | Permission prompts that Claude Code raises appear on the notch as Allow / Deny | ✅ |

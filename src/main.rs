@@ -12,6 +12,7 @@ mod island;
 mod machine;
 mod settings;
 mod stt;
+mod tts;
 mod vad;
 mod wake;
 

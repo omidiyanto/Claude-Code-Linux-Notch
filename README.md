@@ -1,10 +1,10 @@
-# Claude Notch
+# Buddy - Your Realtime Voice AI Assistant
 
 [![CI](https://github.com/omidiyanto/Claude-Code-Linux-Notch/actions/workflows/ci.yaml/badge.svg)](https://github.com/omidiyanto/Claude-Code-Linux-Notch/actions/workflows/ci.yaml)
 
 A dynamic island at the top of your Linux desktop, with an orange pixel buddy that hands your voice to **Claude Code**.
 
-Say **"Hi Claude"**, then a command such as *"open YouTube and play my mix"* or *"let's code, start a new Rust project called todo-api"*. English and Indonesian both work. The notch listens, Claude Code acts on your computer, and the answer appears in the notch.
+Say **"Hi Claude"**, then a command such as *"open YouTube and play my mix"* or *"let's code, start a new Rust project called todo-api"*. The notch listens, Claude Code acts on your computer, and the answer appears in the notch.
 
 - Speech recognition runs **on your computer** (whisper.cpp). Audio is never saved and never sent anywhere; only the text of the command goes to Claude Code.
 - The brain is your own **Claude Code** (`claude -p`), with the login you already have. No extra API key.
@@ -55,12 +55,26 @@ Stopping or restarting the service also stops a command Claude is running at tha
 
 | Model | Size | Quality | 3 s command, measured |
 |---|---|---|---|
-| `small-q5_1` (CPU default) | 190 MB | OK for clear English; often confuses English and Indonesian | ~1.3 s on CPU |
-| `large-v3-turbo-q5_0` (**recommended**, GPU default) | 574 MB | Much better, and tells English from Indonesian | ~0.46 s on a GPU (Quadro T1000) · ~6.7 s on CPU |
+| `small-q5_1` (CPU default) | 190 MB | OK for clear English | ~1.3 s on CPU |
+| `large-v3-turbo-q5_0` (**recommended**, GPU default) | 574 MB | Much better, especially with accents and background noise | ~0.46 s on a GPU (Quadro T1000) · ~6.7 s on CPU |
 
 Switch models in Settings → Voice & notch, after downloading one with `download-model.sh` (in the release archive and in `scripts/`).
 
-With `language = "auto"`, each utterance is recognized in whichever of `auto_languages` (default English and Indonesian) Whisper finds most likely, never another language. Left free, Whisper sometimes heard accented English as Indonesian or Malay and wrote a translation instead of what was said.
+Speech is recognized as English (`language = "en"`). With `language = "auto"`, each utterance is recognized in whichever of `auto_languages` Whisper finds most likely, never another language: left free, Whisper sometimes heard accented English as another language and wrote a translation instead of what was said.
+
+## Reading answers aloud (Kokoro)
+
+Answers can be spoken by [Kokoro-82M](https://huggingface.co/hexgrad/Kokoro-82M), running on this computer, in English. Turn it on with **Read answers aloud** in Settings → Voice & notch, after:
+
+```bash
+sudo pacman -S --needed espeak-ng          # phonemes (Debian/Ubuntu: espeak-ng)
+scripts/download-model.sh kokoro           # the model and two voices, ~330 MB, checksums pinned
+```
+
+- On the CPU it reads about 4× faster than real time. On an NVIDIA GPU, build with `--features tts-cuda` (below): ONNX Runtime's CUDA provider, which needs CUDA 13 and cuDNN 9 installed (`sudo pacman -S cuda cudnn`).
+- The microphone is off while it speaks, so the notch never hears itself. Click the notch, press ✕ or give a new command to stop it. The follow-up window opens when it has finished.
+- Voices: `voice = "af_heart"` (default) or `"am_michael"`; any other Kokoro voice file put in `~/.local/share/claude-notch/models/kokoro/voices/` works too.
+- Sound goes out through `pw-play` (PipeWire).
 
 ## Building from source
 
@@ -72,11 +86,12 @@ sudo pacman -S --needed vulkan-headers shaderc vulkan-icd-loader   # for the GPU
 cargo build --release                      # CPU
 cargo build --release --features vulkan    # GPU: NVIDIA, AMD and Intel through Vulkan
 cargo build --release --features cuda      # GPU: NVIDIA only, needs CUDA
+cargo build --release --features vulkan,tts-cuda   # plus spoken answers on an NVIDIA GPU (CUDA 13, cuDNN 9)
 
 scripts/install.sh --from-source           # or: build, install and start it in one go
 ```
 
-Rust 1.88 or newer is needed.
+Rust 1.92 or newer is needed.
 
 ## Usage
 
@@ -86,13 +101,14 @@ Rust 1.88 or newer is needed.
 | Say "Hey Claude, open YouTube" | The wake phrase and the command in one sentence. |
 | Speak within 60 seconds of an answer | A follow-up without the wake phrase (an orange dot shows this window). |
 | Any later command | Continues the same Claude conversation: context is kept until Claude Notch restarts or stops. If that conversation can no longer be loaded (its history was deleted), the command runs in a new one. |
-| Say "Hey Claude, batal" / "stop" | Cancels what Claude is doing. |
+| Say "Hey Claude, stop" / "cancel" | Cancels what Claude is doing. |
+| Hover the top edge where the notch sits | It slides out. At rest it stays tucked away, and comes out by itself whenever something happens (listening, thinking, an answer). |
 | Click the notch | Push-to-talk. |
 | Drag the notch | Moves it anywhere. Drop it near the top edge and it snaps back into place as a notch. |
 | ⚙ (hover the notch, or while it is open) | Opens the settings window. |
 | Right-click the notch | Turns the microphone off or on. The device really is closed, and the buddy turns grey. |
 | ✕ | Cancel. |
-| Something gets blocked | Claude says what was blocked. Confirm it in a follow-up by naming the action and its target exactly ("ya, hapus folder ~/Downloads/tmp"). |
+| Something gets blocked | Claude says what was blocked. Confirm it in a follow-up by naming the action and its target exactly ("yes, delete the folder ~/Downloads/tmp"). |
 | An approval card appears | Only when Claude Code asks: in the "Ask every action" mode, or when auto mode pauses after repeated blocks. **Allow** or **Deny**. |
 
 CLI (talks to the running notch):
@@ -106,7 +122,7 @@ claude-notch settings            # open the settings window
 claude-notch demo approval       # preview a look: idle, sleep, listening, thinking, working, approval, done, error
 ```
 
-Recognised wake phrases: *hi / hey / hai / halo / hello / ok / oke* + *Claude*, including common recognition slips ("cloud", "klod").
+Recognised wake phrases: *hi / hey / hello / ok / okay* + *Claude*, including common recognition slips ("cloud", "klod").
 
 ## Settings: where each one lives
 
@@ -123,7 +139,7 @@ Everything can be changed in the settings window. Each setting is stored in the 
 The voice scope starts with `effortLevel: "low"` and a small allowlist of safe commands. Claude Code itself enforces two rules: **auto mode** and `bypassPermissions` take effect only from the user scope, never from a project file such as the voice scope.
 
 How Claude Notch writes Claude Code's settings files, so it never breaks them:
-- Only when you press **Simpan** in the Claude tab, and only the keys whose value you changed. Every other key keeps its value and its place in the file.
+- Only when you press **Save** in the Claude tab, and only the keys whose value you changed. Every other key keeps its value and its place in the file.
 - The file is re-read just before it is replaced, in case Claude Code (`/config`, `/model`) wrote it meanwhile. The write is atomic and keeps the file's permissions.
 - A backup of the previous version goes to `~/.local/share/claude-notch/backups/` (the last 10 per file), never into `~/.claude`.
 - A file that is not valid JSON is shown as an error and never touched. `bypassPermissions` is never written.
@@ -132,14 +148,16 @@ How Claude Notch writes Claude Code's settings files, so it never breaks them:
 `config.toml` (every key optional; the defaults are shown):
 
 ```toml
-wake_phrases = ["hi claude", "hey claude", "hai claude", "halo claude", "hallo claude", "hello claude", "ok claude", "oke claude"]
-language = "auto"            # "auto": per utterance, the likeliest of auto_languages; or one code like "en"
-auto_languages = ["en", "id"]
+wake_phrases = ["hi claude", "hey claude", "hello claude", "ok claude", "okay claude"]
+language = "en"              # a Whisper language code, or "auto": per utterance, the likeliest of auto_languages
+auto_languages = ["en"]
 # model_path = "~/.local/share/claude-notch/models/ggml-small-q5_1.bin"
 claude_bin = "claude"
 follow_up_secs = 60          # 0 turns follow-up off
 turn_timeout_secs = 300
 sounds = true
+speak = false                # read answers aloud with Kokoro (see above)
+voice = "af_heart"
 vad_threshold = 0.012        # raise it if the room is noisy
 position = { x = 0.5, y = 0.0 }  # centre as a fraction of the screen width, pixels from the top
 ```

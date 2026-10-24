@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Packs a built binary with everything an install needs into a release archive.
 # Used by CI for releases, and by scripts/install.sh --from-source.
-#   scripts/package.sh <cpu|vulkan> [binary] [out-dir]   → prints the archive path
+#   scripts/package.sh <cpu|vulkan> [binary] [out-dir] [tts-cuda]   → prints the archive path
+#   tts-cuda: the binary was built with that feature; ONNX Runtime's CUDA libraries go next to it.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -9,16 +10,17 @@ variant="${1:-}"
 case "$variant" in
   cpu | vulkan) ;;
   *)
-    echo "usage: scripts/package.sh <cpu|vulkan> [binary] [out-dir]" >&2
+    echo "usage: scripts/package.sh <cpu|vulkan> [binary] [out-dir] [tts-cuda]" >&2
     exit 2
     ;;
 esac
 binary="${2:-target/release/claude-notch}"
 out="${3:-dist}"
+tts_cuda="${4:-}"
 [[ -x "$binary" ]] || { echo "no binary at $binary: build it first" >&2; exit 1; }
 
 version="$(sed -n 's/^version = "\(.*\)"$/\1/p' Cargo.toml | head -n 1)"
-name="claude-notch-v${version}-linux-$(uname -m)-${variant}"
+name="claude-notch-v${version}-linux-$(uname -m)-${variant}${tts_cuda:+-tts-cuda}"
 stage="$(mktemp -d)"
 trap 'rm -rf "$stage"' EXIT
 
@@ -28,6 +30,12 @@ install -Dm644 icons/icon.png "$dir/icon.png"
 install -Dm644 packaging/claude-notch.service "$dir/claude-notch.service"
 install -Dm644 packaging/claude-notch.desktop "$dir/claude-notch.desktop"
 install -Dm755 scripts/download-model.sh "$dir/download-model.sh"
+if [[ "$tts_cuda" == tts-cuda ]]; then
+  # ONNX Runtime loads them from the binary's own directory, by full path (not through the linker).
+  for lib in libonnxruntime_providers_shared.so libonnxruntime_providers_cuda.so; do
+    install -Dm644 "$(dirname "$binary")/$lib" "$dir/$lib"
+  done
+fi
 install -Dm644 README.md LICENSE -t "$dir"
 
 mkdir -p "$out"

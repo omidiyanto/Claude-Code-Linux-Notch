@@ -312,7 +312,7 @@ mod tests {
     }
   },
   "theme": "dark",
-  "language": "indonesian"
+  "language": "english"
 }
 "#;
 

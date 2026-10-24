@@ -1,6 +1,6 @@
 // The notch page: draws what the app says (it holds no logic of its own), animates the buddy,
 // places the pill where the user dragged it, and reports its rectangle so only the pill takes
-// clicks.
+// clicks. At rest it hides; hovering where it hides, or anything happening, brings it back.
 
 import { DEFAULT, clamp, dragged, isDrag } from './position.js';
 import { frame, H } from './sprite.js';
@@ -27,8 +27,13 @@ const bars = [...document.querySelectorAll('#wave i')];
 const ctx = canvas.getContext('2d');
 canvas.height = H + 2; // one row of room above and below for hops
 
-let ui = { mode: 'idle', title: '', detail: '', approval: null, paused: false, follow_up: false };
+let ui = { mode: 'idle', title: '', detail: '', approval: null, paused: false, follow_up: false, speaking: false };
 let level = 0;
+let hovered = false;
+let hideTimer = 0;
+// Hidden at the top edge, this many pixels of the pill stay on screen to catch the pointer.
+const PEEK = 3;
+const HIDE_AFTER_MS = 700;
 
 function invoke(cmd, args) {
   return tauri.core.invoke(cmd, args).catch((e) => console.error(cmd, e));
@@ -39,6 +44,8 @@ function render(next) {
   const resting = ui.mode === 'idle' || ui.mode === 'sleep';
   island.dataset.mode = ui.paused && resting ? 'paused' : ui.mode;
   island.classList.toggle('follow-up', ui.follow_up);
+  island.classList.toggle('speaking', ui.speaking);
+  updateHidden();
   status.textContent = LABELS[ui.mode] ?? '';
   title.textContent = ui.title;
   detail.textContent = ui.detail;
@@ -48,6 +55,7 @@ function render(next) {
 function showLevel(value) {
   level = value;
   const loud = Math.min(1, value * 14);
+  island.style.setProperty('--level', loud.toFixed(2));
   bars.forEach((bar, i) => {
     const shape = [0.55, 0.85, 1, 0.8, 0.6][i];
     bar.style.height = `${3 + loud * 16 * shape}px`;
@@ -74,7 +82,13 @@ function draw(t, mode) {
     glance = Math.random() < 0.3 ? (Math.random() < 0.5 ? -1 : 1) : 0;
     glanceUntil = t + 1 + Math.random() * 4;
   }
-  const f = frame(mode, t, { blink: t < blinkUntil, look: pointerLook ?? glance, poke: t < pokeUntil, level });
+  const f = frame(mode, t, {
+    blink: t < blinkUntil,
+    look: pointerLook ?? glance,
+    poke: t < pokeUntil,
+    level,
+    talk: ui.speaking,
+  });
   ctx.clearRect(0, 0, canvas.width, canvas.height);
   for (const [x, y, color] of f.pixels) {
     ctx.fillStyle = color;
@@ -84,7 +98,8 @@ function draw(t, mode) {
 
 function tick() {
   const mode = island.dataset.mode;
-  const sleepy = mode === 'sleep' || mode === 'paused';
+  // Hidden, nothing needs drawing: wake up a few times a second to notice it is back.
+  const sleepy = mode === 'sleep' || mode === 'paused' || island.classList.contains('hidden');
   const now = performance.now();
   const interval = sleepy ? 250 : mode === 'idle' ? 83 : 33;
   if (!document.hidden && now - lastDraw >= interval) {
@@ -102,10 +117,43 @@ function reportRegion() {
   regionQueued = true;
   requestAnimationFrame(() => {
     regionQueued = false;
-    const r = island.getBoundingClientRect();
-    invoke('set_hit_region', { x: r.left, y: r.top, width: r.width, height: r.height });
+    // The box the pill is settling into, not where an animation has it now, so the pointer never
+    // falls out of it mid-animation.
+    const width = island.offsetWidth;
+    const height = island.offsetHeight;
+    const x = island.offsetLeft - width / 2;
+    const docked = position.y === 0;
+    const peek = island.classList.contains('hidden') && docked;
+    invoke('set_hit_region', { x, y: island.offsetTop, width, height: peek ? PEEK : height });
   });
 }
+
+// Hidden while resting, unless the pointer is on it, it is being dragged, or it is speaking.
+function updateHidden() {
+  const resting = ['idle', 'sleep', 'paused'].includes(island.dataset.mode);
+  const hide = resting && !hovered && !drag && !ui.speaking;
+  if (hide === island.classList.contains('hidden')) return;
+  island.classList.toggle('hidden', hide);
+  island.setAttribute('aria-hidden', String(hide));
+  reportRegion();
+}
+
+function pointerIn() {
+  clearTimeout(hideTimer);
+  if (hovered) return;
+  hovered = true;
+  updateHidden();
+}
+island.addEventListener('mouseenter', pointerIn);
+
+function pointerLeft() {
+  clearTimeout(hideTimer);
+  hideTimer = setTimeout(() => {
+    hovered = false;
+    updateHidden();
+  }, HIDE_AFTER_MS);
+}
+island.addEventListener('mouseleave', pointerLeft);
 
 // Position and dragging. The window covers the whole screen; the pill moves inside it.
 let position = { ...DEFAULT };
@@ -147,6 +195,7 @@ function endDrag() {
     invoke('save_position', position);
   }
   drag = null;
+  updateHidden();
 }
 island.addEventListener('pointerup', endDrag);
 island.addEventListener('pointercancel', endDrag);
@@ -190,8 +239,18 @@ island.addEventListener('mouseleave', () => {
 
 new ResizeObserver(reportRegion).observe(island);
 place(position);
+updateHidden();
 invoke('notch_position').then((saved) => saved && place(saved));
 tauri.event.listen('position', (event) => place(event.payload));
+// The pointer crossing the pill's input region, from GTK: WebKit misses both directions here.
+tauri.event.listen('pointer', (event) => {
+  if (event.payload === true) {
+    pointerIn();
+  } else {
+    pointerLook = null;
+    pointerLeft();
+  }
+});
 
 tauri.event.listen('notch', (event) => render(event.payload));
 tauri.event.listen('sfx', (event) => play(event.payload));

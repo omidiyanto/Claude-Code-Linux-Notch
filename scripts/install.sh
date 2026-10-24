@@ -13,6 +13,8 @@
 #   --version vX.Y.Z     install that release instead of the latest
 #   --archive FILE       install from a release archive already downloaded (offline)
 #   --from-source        build from this checkout instead of downloading (run inside the repository)
+#   --speak              read answers aloud: espeak-ng, the Kokoro voice model, and speak = true
+#   --tts-cuda           with --from-source: read answers on an NVIDIA GPU (needs CUDA 13 and cuDNN 9)
 #   --no-deps            do not install system packages
 #   --no-service         do not install or start the systemd user service
 #   --uninstall          remove Claude Notch; settings, models and history are kept
@@ -25,6 +27,8 @@ CURL=(curl --proto '=https' --tlsv1.2 --fail --location --silent --show-error)
 MIN_GLIBC="2.39"
 
 BIN_DIR="$HOME/.local/bin"
+# ONNX Runtime's CUDA provider (--tts-cuda): loaded from the binary's own directory.
+PROVIDERS=(libonnxruntime_providers_shared.so libonnxruntime_providers_cuda.so)
 ICON="${XDG_DATA_HOME:-$HOME/.local/share}/icons/hicolor/128x128/apps/claude-notch.png"
 UNIT_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user"
 AUTOSTART="${XDG_CONFIG_HOME:-$HOME/.config}/autostart/claude-notch.desktop"
@@ -37,7 +41,8 @@ else
   bold="" green="" yellow="" red="" reset=""
 fi
 step() { printf '\n%s==> %s%s\n' "$bold" "$*" "$reset"; }
-info() { printf '    %s\n' "$*"; }
+# Progress goes to stderr: functions whose stdout is captured ($(...)) report progress too.
+info() { printf '    %s\n' "$*" >&2; }
 warn() { printf '%s    ! %s%s\n' "$yellow" "$*" "$reset" >&2; }
 die() {
   printf '%s    ✗ %s%s\n' "$red" "$*" "$reset" >&2
@@ -48,7 +53,7 @@ usage() {
   if [[ -f "$0" ]]; then
     sed -n '2,/^set -euo/p' "$0" | sed -e '/^set -euo/d' -e 's/^# \{0,1\}//'
   else
-    echo "Options: --cpu --gpu --model NAME --version vX.Y.Z --archive FILE --from-source --no-deps --no-service --uninstall [--purge]"
+    echo "Options: --cpu --gpu --model NAME --version vX.Y.Z --archive FILE --from-source --speak --tts-cuda --no-deps --no-service --uninstall [--purge]"
     echo "Details: https://github.com/$REPO/blob/main/scripts/install.sh"
   fi
   exit "${1:-0}"
@@ -75,41 +80,47 @@ package_manager() {
 
 # System packages for running (and, with "build", for compiling) the given variant.
 packages() {
-  local pm="$1" variant="$2" build="$3"
+  local pm="$1" variant="$2" build="$3" speak="$4" tts_cuda="$5"
   case "$pm" in
     pacman)
       echo webkit2gtk-4.1 gtk-layer-shell alsa-lib curl tar
       [[ "$variant" == vulkan ]] && echo vulkan-icd-loader
       [[ "$build" == build ]] && echo base-devel cmake clang
       [[ "$build" == build && "$variant" == vulkan ]] && echo vulkan-headers shaderc
+      [[ "$speak" == yes ]] && echo espeak-ng pipewire
+      [[ -n "$tts_cuda" ]] && echo cuda cudnn
       ;;
     apt-get)
       echo libwebkit2gtk-4.1-0 libgtk-layer-shell0 curl tar
       [[ "$variant" == vulkan ]] && echo libvulkan1
       [[ "$build" == build ]] && echo build-essential pkg-config cmake clang libclang-dev libwebkit2gtk-4.1-dev libgtk-layer-shell-dev libasound2-dev
       [[ "$build" == build && "$variant" == vulkan ]] && echo libvulkan-dev glslc
+      [[ "$speak" == yes ]] && echo espeak-ng pipewire-bin
       ;;
     dnf)
       echo webkit2gtk4.1 gtk-layer-shell alsa-lib curl tar
       [[ "$variant" == vulkan ]] && echo vulkan-loader
       [[ "$build" == build ]] && echo gcc gcc-c++ make cmake clang pkgconf webkit2gtk4.1-devel gtk-layer-shell-devel alsa-lib-devel
       [[ "$build" == build && "$variant" == vulkan ]] && echo vulkan-headers vulkan-loader-devel glslc
+      [[ "$speak" == yes ]] && echo espeak-ng pipewire-utils
       ;;
     zypper)
       echo libwebkit2gtk-4_1-0 gtk-layer-shell alsa curl tar
       [[ "$variant" == vulkan ]] && echo libvulkan1
       [[ "$build" == build ]] && echo gcc gcc-c++ make cmake clang pkgconf webkit2gtk3-soup2-devel gtk-layer-shell-devel alsa-devel
       [[ "$build" == build && "$variant" == vulkan ]] && echo vulkan-devel shaderc
+      [[ "$speak" == yes ]] && echo espeak-ng pipewire-tools
       ;;
   esac
   return 0
 }
 
 install_packages() {
-  local variant="$1" build="$2" pm
+  local variant="$1" build="$2" speak="$3" tts_cuda="$4" pm
   pm="$(package_manager)"
   local -a pkgs
-  read -r -a pkgs <<<"$(packages "$pm" "$variant" "$build" | tr '\n' ' ')"
+  read -r -a pkgs <<<"$(packages "$pm" "$variant" "$build" "$speak" "$tts_cuda" | tr '\n' ' ')"
+  [[ -n "$tts_cuda" && "$pm" != pacman ]] && warn "Install CUDA 13 and cuDNN 9 from NVIDIA yourself for --tts-cuda."
   if [[ "$pm" == none || ${#pkgs[@]} -eq 0 ]]; then
     warn "Unknown package manager: install WebKitGTK 4.1, gtk-layer-shell and ALSA yourself."
     return
@@ -151,7 +162,7 @@ download_release() {
 }
 
 build_from_source() {
-  local variant="$1" dir="$2" repo
+  local variant="$1" dir="$2" tts_cuda="$3" repo
   repo="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." 2>/dev/null && pwd)" || true
   if [[ ! -f "$repo/Cargo.toml" ]] || ! grep -q '^name = "claude-notch"' "$repo/Cargo.toml"; then
     die "--from-source must be run from inside the repository (scripts/install.sh)."
@@ -159,24 +170,27 @@ build_from_source() {
   command -v cargo >/dev/null ||
     die "Rust is not installed: see https://rustup.rs, then run this again."
   local features=()
-  [[ "$variant" == vulkan ]] && features=(--features vulkan)
-  info "cargo build --release --locked ${features[*]}"
-  (cd "$repo" && cargo build --release --locked "${features[@]}" >&2)
-  (cd "$repo" && scripts/package.sh "$variant" target/release/claude-notch "$dir" | tail -n 1)
+  [[ "$variant" == vulkan ]] && features+=(vulkan)
+  [[ -n "$tts_cuda" ]] && features+=(tts-cuda)
+  local flags=()
+  [[ ${#features[@]} -gt 0 ]] && flags=(--features "$(IFS=,; echo "${features[*]}")")
+  info "cargo build --release --locked ${flags[*]}"
+  (cd "$repo" && cargo build --release --locked "${flags[@]}" >&2)
+  (cd "$repo" && scripts/package.sh "$variant" target/release/claude-notch "$dir" "$tts_cuda" | tail -n 1)
 }
 
-# Points config.toml at the speech model, keeping every other setting.
-set_model_path() {
-  local path="$1" file="$CONFIG_DIR/config.toml"
+# Sets one top-level key of config.toml (KEY VALUE, VALUE already in TOML), keeping every other setting.
+set_config() {
+  local key="$1" value="$2" file="$CONFIG_DIR/config.toml"
   mkdir -p "$CONFIG_DIR"
   chmod 700 "$CONFIG_DIR"
   if [[ ! -f "$file" ]]; then
-    printf 'model_path = "%s"\n' "$path" >"$file"
-  elif grep -q '^model_path *=' "$file"; then
-    sed -i "s|^model_path *=.*|model_path = \"$path\"|" "$file"
+    printf '%s = %s\n' "$key" "$value" >"$file"
+  elif grep -q "^$key *=" "$file"; then
+    sed -i "s|^$key *=.*|$key = $value|" "$file"
   else
     # Top-level keys must come before any [table], so the new line goes first.
-    sed -i "1i model_path = \"$path\"" "$file"
+    sed -i "1i $key = $value" "$file"
   fi
   chmod 600 "$file"
 }
@@ -189,6 +203,7 @@ uninstall() {
   fi
   pkill -x claude-notch 2>/dev/null || true
   rm -f "$BIN_DIR/claude-notch" "$ICON" "$UNIT_DIR/claude-notch.service" "$AUTOSTART"
+  rm -f "${PROVIDERS[@]/#/$BIN_DIR/}"
   has_systemd_user && systemctl --user daemon-reload
   if [[ "$purge" == yes ]]; then
     rm -rf "$CONFIG_DIR" "$DATA_DIR"
@@ -202,6 +217,7 @@ uninstall() {
 
 main() {
   local variant="" model="" version="" archive="" from_source=no deps=yes service=yes remove=no purge=no
+  local speak=no tts_cuda=""
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --cpu) variant=cpu ;;
@@ -210,6 +226,8 @@ main() {
       --version) version="${2:?--version needs a tag like v0.3.0}"; shift ;;
       --archive) archive="${2:?--archive needs a file}"; shift ;;
       --from-source) from_source=yes ;;
+      --speak) speak=yes ;;
+      --tts-cuda) tts_cuda=tts-cuda speak=yes ;;
       --no-deps) deps=no ;;
       --no-service) service=no ;;
       --uninstall) remove=yes ;;
@@ -229,6 +247,7 @@ main() {
   [[ "$(uname -m)" == x86_64 || "$from_source" == yes ]] ||
     die "Release builds are for x86_64; on $(uname -m) use --from-source."
 
+  [[ -z "$tts_cuda" || "$from_source" == yes ]] || die "--tts-cuda needs --from-source: release builds speak on the CPU."
   if [[ -z "$variant" ]]; then
     if has_dedicated_gpu; then variant=vulkan; else variant=cpu; fi
   fi
@@ -239,13 +258,13 @@ main() {
 
   if [[ "$deps" == yes ]]; then
     step "Installing system packages"
-    install_packages "$variant" "$([[ "$from_source" == yes ]] && echo build || echo run)"
+    install_packages "$variant" "$([[ "$from_source" == yes ]] && echo build || echo run)" "$speak" "$tts_cuda"
   fi
   if ! command -v sha256sum >/dev/null || ! command -v tar >/dev/null; then
     die "sha256sum and tar are needed."
   fi
 
-  local tmp
+  # Global, not local: the EXIT trap runs after main has returned.
   tmp="$(mktemp -d)"
   trap 'rm -rf "$tmp"' EXIT
 
@@ -253,7 +272,7 @@ main() {
   if [[ -n "$archive" ]]; then
     [[ -f "$archive" ]] || die "No archive at $archive."
   elif [[ "$from_source" == yes ]]; then
-    archive="$(build_from_source "$variant" "$tmp")"
+    archive="$(build_from_source "$variant" "$tmp" "$tts_cuda")"
   else
     local glibc
     glibc="$(ldd --version 2>/dev/null | head -n 1 | grep -oE '[0-9]+\.[0-9]+$' || true)"
@@ -275,11 +294,24 @@ main() {
   pgrep -x claude-notch >/dev/null && running=yes
   install -Dm755 "$src/claude-notch" "$BIN_DIR/claude-notch"
   install -Dm644 "$src/icon.png" "$ICON"
+  local lib
+  for lib in "${PROVIDERS[@]}"; do
+    if [[ -f "$src/$lib" ]]; then
+      install -Dm644 "$src/$lib" "$BIN_DIR/$lib"
+      info "$BIN_DIR/$lib (ONNX Runtime's CUDA provider)"
+    fi
+  done
   info "$BIN_DIR/claude-notch ($("$BIN_DIR/claude-notch" --version))"
 
   step "Speech model"
   "$src/download-model.sh" "$model"
-  [[ "$model" == small-q5_1 ]] || set_model_path "$DATA_DIR/models/ggml-$model.bin"
+  [[ "$model" == small-q5_1 ]] || set_config model_path "\"$DATA_DIR/models/ggml-$model.bin\""
+
+  if [[ "$speak" == yes ]]; then
+    step "Voice for answers (Kokoro)"
+    "$src/download-model.sh" kokoro
+    set_config speak true
+  fi
 
   if [[ "$service" == yes ]]; then
     step "Starting with your desktop"

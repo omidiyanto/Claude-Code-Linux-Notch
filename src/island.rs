@@ -12,7 +12,7 @@ use std::sync::Mutex;
 
 use gtk::glib::translate::ToGlibPtr;
 use gtk::prelude::*;
-use tauri::WebviewWindow;
+use tauri::{Emitter, WebviewWindow};
 
 /// No screen is larger; anything beyond is a bogus value from the page.
 const MAX_SIDE: f64 = 16_384.0;
@@ -104,6 +104,26 @@ pub fn set_region(win: &WebviewWindow, rect: Rect) -> Result<(), String> {
 pub fn setup(win: &WebviewWindow) -> Result<(), String> {
     let gw = win.gtk_window().map_err(|e| e.to_string())?;
     gw.set_accept_focus(false);
+    // The input region is only the pill, so the pointer entering or leaving the surface is the
+    // pointer entering or leaving the pill. WebKit reports neither reliably here (it keeps the pill
+    // hovered after the pointer left, and sends no event when it comes straight back), so the
+    // page hears it from GTK: `pointer` with true or false.
+    gw.add_events(gtk::gdk::EventMask::ENTER_NOTIFY_MASK | gtk::gdk::EventMask::LEAVE_NOTIFY_MASK);
+    for inside in [true, false] {
+        let page = win.clone();
+        let crossed = move |_: &gtk::ApplicationWindow, event: &gtk::gdk::EventCrossing| {
+            // Inferior: between the window and a child of it, still inside the surface.
+            if event.detail() != gtk::gdk::NotifyType::Inferior {
+                let _ = page.emit("pointer", inside);
+            }
+            gtk::glib::Propagation::Proceed
+        };
+        if inside {
+            gw.connect_enter_notify_event(crossed);
+        } else {
+            gw.connect_leave_notify_event(crossed);
+        }
+    }
     let wanted = std::env::var("CLAUDE_NOTCH_LAYER_SHELL").map_or(true, |v| v != "0");
     // SAFETY: a query with no arguments.
     let supported = unsafe { layer::gtk_layer_is_supported() } != 0;

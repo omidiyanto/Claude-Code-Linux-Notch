@@ -31,13 +31,14 @@ One process: a Tauri 2 app with a Rust core and a plain HTML/CSS/JS page (no bun
 | `src/app.rs` | The driver: carries out the machine's effects (UI, Claude runs, approvals, microphone), signals, restart. |
 | `src/audio.rs` | Default input device → mono 16 kHz (averaging resampler) → segmenter. Pausing closes the device. |
 | `src/vad.rs` | Energy detector with an adaptive noise floor: utterances, plus a snapshot every ~1 s while someone speaks (live captions). |
-| `src/stt.rs` | whisper.cpp: language detection limited to `auto_languages`, a prompt in the detected language, `audio_ctx` sized to the audio, dedicated GPU preferred. |
+| `src/stt.rs` | whisper.cpp: English, or detection limited to `auto_languages`; a prompt with the names it misspells; `audio_ctx` sized to the audio, dedicated GPU preferred. |
+| `src/tts.rs` | Spoken answers: espeak-ng (en-us) phonemes in Kokoro's spelling, Kokoro-82M through ONNX Runtime (CUDA in the `tts-cuda` build, CPU otherwise), `pw-play`. |
 | `src/wake.rs` | Wake phrase, cancel words and recognition noise, on text. |
 | `src/brain.rs` | Runs `claude -p` in the voice workspace: prompt through stdin, stream-json parsing, cancellation per process group, connectivity probe. |
 | `src/claude_settings.rs` | Reads and merges Claude Code's settings files. |
 | `src/approve.rs` | MCP server behind `--permission-prompt-tool`: forwards each request to the notch. |
 | `src/ipc.rs` | `$XDG_RUNTIME_DIR/claude-notch.sock`: CLI commands, permission requests, single instance. |
-| `src/island.rs` | Full-screen transparent layer-shell surface whose input region is only the pill; XWayland fallback on GNOME. |
+| `src/island.rs` | Full-screen transparent layer-shell surface whose input region is only the pill; tells the page when the pointer enters or leaves it; XWayland fallback on GNOME. |
 | `src/settings.rs`, `src/history.rs` | Settings window commands; history read from Claude Code's transcripts. |
 | `src/config.rs` | The notch's own `config.toml`, XDG paths, atomic writes. |
 | `ui/sprite.js`, `ui/sfx.js`, `ui/position.js`, `ui/settings-model.js` | Pure, unit-tested parts of the pages: the character, sounds, dragging, settings logic. |
@@ -52,6 +53,13 @@ Sleep ◀── 2 min idle ── Idle ◀────────────�
                                                                     │                 │
                                                        Approval ◀── permission prompt ┘
 ```
+
+With `speak` on, an answer is read aloud with the microphone off (the notch must not hear itself
+and take its own words for a follow-up); it stays on screen until the reading ends, and the
+follow-up window opens then. A click, ✕, pause or a new command stops it.
+
+At rest (idle, sleep, paused) the page tucks the pill into the top edge; a few invisible pixels
+stay on screen as the input region, so hovering the edge brings it out.
 
 During the follow-up window after an answer, speech counts as a command without the wake phrase.
 Every command continues the same Claude conversation (`--resume`) until the notch restarts. If
@@ -99,16 +107,19 @@ These are the choices that experiments on real hardware and real Claude Code out
 | Project-scope `effortLevel: "low"` overrides a per-model `effortLevel: "high"` saved by `/effort` | The voice workspace ships with effort `low` |
 | `claudeInChromeDefaultEnabled` gives 0 browser tools in `-p`; `--chrome` gives 22 | The notch passes `--chrome` when that setting is on |
 | Resuming a missing session yields `result/error_during_execution` without `init` | Fall back to a new conversation |
-| Whisper over ~100 languages heard accented English as Indonesian/Malay and translated it | Detection restricted to `auto_languages`; Malay counts as Indonesian |
-| A prompt made only of names produced "Chroude" (Claude + Chromium) | Prompt is a sentence in the detected language |
+| Whisper over ~100 languages heard accented English as another language and translated it | English by default; `auto` only chooses among `auto_languages` |
+| A prompt made only of names produced "Chroude" (Claude + Chromium) | The prompt is a sentence |
 | `small-q5_1`: 1.3 s on CPU but weak language detection; `large-v3-turbo-q5_0`: 6.7 s on CPU, 0.46 s on the GPU | Recommend turbo with the Vulkan build |
 | whisper.cpp takes the first GPU of any kind (the Intel iGPU on a laptop) | Pick the first dedicated GPU |
 | Background music fed 30 s chunks to Whisper (361 % CPU) | Peek at the first 3 s for the wake phrase; 12 s cap on follow-ups |
 | `flash_attn` saved ~120 MB but garbled short commands | Left off |
+| Kokoro fp32, 3.6 s of speech on a Quadro T1000: 0.32 s with the CUDA provider, 0.81 s on the CPU. WebGPU (Vulkan) was slower than the CPU (1.37 s for 4 s). The fp16 model gave NaN audio on both WebGPU and CUDA | fp32 model; CUDA provider in the `tts-cuda` build, CPU otherwise |
+| With the input region only around the pill, WebKitGTK kept the pill hovered after the pointer left it, and sent nothing when the pointer jumped straight back | The page hears enter and leave from GTK's crossing events (`pointer`) |
+| espeak-ng drops punctuation, and Kokoro then reads without pauses | Each clause is phonemized alone and its mark put back |
 | Default systemd `KillMode` killed apps opened by voice | `KillMode=process`, and the notch stops its own `claude -p` on SIGTERM |
 
 ## Build and release
 
 - `scripts/check.sh`: rustfmt, clippy (pedantic, `-D warnings`), Rust tests, cargo audit, ESLint, UI tests, npm audit, shellcheck, systemd unit and desktop entry validation. `--slow` adds end-to-end speech tests (espeak-ng → whisper).
 - `.github/workflows/ci.yaml`: runs the gate on every push and pull request. On a `v*` tag it builds `cpu` and `vulkan` binaries on Ubuntu 24.04 with `GGML_NATIVE=OFF` (an AVX2 baseline instead of the build machine's CPU), packages them with `scripts/package.sh`, and publishes a GitHub release with `SHA256SUMS`.
-- `scripts/install.sh`: installs dependencies, the release binary for the machine (Vulkan when a GPU is present), the speech model, and the systemd user service.
+- `scripts/install.sh`: installs dependencies, the release binary for the machine (Vulkan when a GPU is present), the speech model, and the systemd user service. `--speak` adds the Kokoro voice; `--tts-cuda` builds from source with ONNX Runtime's CUDA provider, whose two libraries go next to the binary in `~/.local/bin`: ONNX Runtime loads them from the executable's own directory by full path, so neither RUNPATH nor `LD_LIBRARY_PATH` would find them elsewhere.

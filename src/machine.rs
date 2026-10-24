@@ -43,6 +43,8 @@ pub struct Ui {
     pub approval: Option<u64>,
     pub paused: bool,
     pub follow_up: bool,
+    /// The answer is being read aloud.
+    pub speaking: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -78,6 +80,8 @@ pub enum Event {
         allow: bool,
     },
     Problem(String),
+    /// The answer has been read aloud, or could not be.
+    Spoken,
     Tick,
 }
 
@@ -85,10 +89,19 @@ pub enum Event {
 pub enum Effect {
     Ui(Ui),
     Sfx(Sfx),
-    StartBrain { prompt: String, resume: Option<String> },
+    StartBrain {
+        prompt: String,
+        resume: Option<String>,
+    },
     CancelBrain,
-    Approve { id: u64, allow: bool },
+    Approve {
+        id: u64,
+        allow: bool,
+    },
     Mic(bool),
+    /// Read the answer aloud; the microphone is off meanwhile, so the notch never hears itself.
+    Speak(String),
+    StopSpeaking,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -129,6 +142,8 @@ struct Approval {
 pub struct Machine {
     phrases: Vec<String>,
     follow_up: Duration,
+    speak: bool,
+    speaking: bool,
     state: State,
     paused: bool,
     approvals: VecDeque<Approval>,
@@ -157,6 +172,8 @@ impl Machine {
         Self {
             phrases,
             follow_up,
+            speak: false,
+            speaking: false,
             state: State::Idle,
             paused: false,
             approvals: VecDeque::new(),
@@ -169,6 +186,10 @@ impl Machine {
 
     pub fn set_follow_up(&mut self, follow_up: Duration) {
         self.follow_up = follow_up;
+    }
+
+    pub fn set_speak(&mut self, speak: bool) {
+        self.speak = speak;
     }
 
     fn following(&self, now: Instant) -> bool {
@@ -202,6 +223,7 @@ impl Machine {
             approval,
             paused: self.paused,
             follow_up: self.following(now) && matches!(mode, Mode::Idle | Mode::Done),
+            speaking: self.speaking,
         }
     }
 
@@ -241,11 +263,14 @@ impl Machine {
                     self.listen(now, &mut fx);
                 }
             }
-            Event::CancelRequested => match self.state {
-                State::Busy { .. } => self.cancel(&mut fx),
-                State::Listening { .. } | State::Shown { .. } => self.state = State::Idle,
-                State::Idle | State::Sleep => {}
-            },
+            Event::CancelRequested => {
+                self.hush(&mut fx);
+                match self.state {
+                    State::Busy { .. } => self.cancel(&mut fx),
+                    State::Listening { .. } | State::Shown { .. } => self.state = State::Idle,
+                    State::Idle | State::Sleep => {}
+                }
+            }
             Event::PauseToggled => {
                 self.paused = !self.paused;
                 fx.push(Effect::Mic(!self.paused));
@@ -255,6 +280,7 @@ impl Machine {
                         self.state = State::Idle;
                     }
                 }
+                self.hush(&mut fx);
             }
             Event::Brain(event) => self.brain(event, now, &mut fx),
             Event::ApprovalRequested { id, tool, detail } => {
@@ -281,6 +307,18 @@ impl Machine {
                 if !matches!(self.state, State::Busy { .. }) {
                     self.show(true, "Claude Notch".into(), message, now + ERROR_SHOWN);
                     fx.push(Effect::Sfx(Sfx::Error));
+                }
+            }
+            Event::Spoken => {
+                if self.speaking {
+                    self.speaking = false;
+                    if !self.paused {
+                        fx.push(Effect::Mic(true));
+                    }
+                    // The follow-up window opens once the answer has been heard to the end.
+                    if !self.follow_up.is_zero() {
+                        self.follow_up_until = Some(now + self.follow_up);
+                    }
                 }
             }
             Event::Tick => self.tick(now),
@@ -342,7 +380,19 @@ impl Machine {
         }
     }
 
+    /// Stops reading an answer aloud: the user wants something else.
+    fn hush(&mut self, fx: &mut Vec<Effect>) {
+        if self.speaking {
+            self.speaking = false;
+            fx.push(Effect::StopSpeaking);
+            if !self.paused {
+                fx.push(Effect::Mic(true));
+            }
+        }
+    }
+
     fn listen(&mut self, now: Instant, fx: &mut Vec<Effect>) {
+        self.hush(fx);
         self.state = State::Listening { until: now + LISTEN_TIMEOUT, transcribing: false, heard: String::new() };
         fx.push(Effect::Sfx(Sfx::Wake));
     }
@@ -350,6 +400,7 @@ impl Machine {
     /// Every command continues the one conversation of this run of the notch; only a restart
     /// starts a new one. The follow-up window decides whether the wake phrase is needed, not this.
     fn command(&mut self, command: String, fx: &mut Vec<Effect>) {
+        self.hush(fx);
         if wake::is_cancel(&command) {
             self.state = State::Idle;
             self.follow_up_until = None;
@@ -409,12 +460,18 @@ impl Machine {
                 }
                 let answer = if answer.is_empty() { "Done.".to_string() } else { answer };
                 let until = now + shown_for(&answer);
+                if !is_error && self.speak {
+                    self.speaking = true;
+                    fx.push(Effect::Speak(answer.clone()));
+                    if !self.paused {
+                        fx.push(Effect::Mic(false));
+                    }
+                } else if !is_error && !self.follow_up.is_zero() {
+                    self.follow_up_until = Some(now + self.follow_up);
+                }
                 self.show(is_error, title, answer, until);
                 self.deny_all(fx);
                 fx.push(Effect::Sfx(if is_error { Sfx::Error } else { Sfx::Done }));
-                if !is_error && !self.follow_up.is_zero() {
-                    self.follow_up_until = Some(now + self.follow_up);
-                }
             }
             BrainEvent::Exited { error } => {
                 let title = std::mem::take(prompt);
@@ -428,7 +485,9 @@ impl Machine {
 
     fn tick(&mut self, now: Instant) {
         match self.state {
-            State::Listening { until, .. } | State::Shown { until, .. } if now >= until => self.state = State::Idle,
+            State::Listening { until, .. } if now >= until => self.state = State::Idle,
+            // The answer stays up for as long as it is being read.
+            State::Shown { until, .. } if now >= until && !self.speaking => self.state = State::Idle,
             State::Idle if now.duration_since(self.last_activity) >= SLEEP_AFTER && !self.following(now) => {
                 self.state = State::Sleep;
             }
@@ -533,16 +592,16 @@ mod tests {
     #[test]
     fn wake_phrase_with_command_runs_at_once() {
         let mut t = T::new();
-        let fx = t.say("Hey Claude, let's code buat project baru");
+        let fx = t.say("Hey Claude, let's code a new project");
         assert!(fx.contains(&Effect::Sfx(Sfx::Wake)));
-        assert!(fx.contains(&start("let's code buat project baru", None)));
+        assert!(fx.contains(&start("let's code a new project", None)));
     }
 
     #[test]
     fn idle_ignores_speech_and_noise() {
         let mut t = T::new();
         t.send(Event::Tick);
-        for text in ["I like Claude Code", "Terima kasih telah menonton!", "[BLANK_AUDIO]"] {
+        for text in ["I like Claude Code", "Thanks for watching!", "[BLANK_AUDIO]"] {
             let fx = t.say(text);
             assert!(fx.is_empty(), "{text}: {fx:?}");
         }
@@ -672,7 +731,7 @@ mod tests {
         t.say("hey claude open firefox");
         assert_eq!(t.say("hey claude open chrome"), Vec::new());
         assert!(t.say("stop").is_empty(), "without the wake phrase it is just talk");
-        let fx = t.say("hey claude, batal!");
+        let fx = t.say("hey claude, cancel!");
         assert!(fx.contains(&Effect::CancelBrain));
         assert_eq!(t.mode(), Mode::Idle);
         assert!(t.brain(BrainEvent::Exited { error: None }).is_empty(), "late events of a cancelled run");
@@ -682,7 +741,7 @@ mod tests {
     fn cancel_word_as_command_runs_nothing() {
         let mut t = T::new();
         t.say("hi claude");
-        let fx = t.say("gak jadi");
+        let fx = t.say("never mind");
         assert!(fx.contains(&Effect::Sfx(Sfx::Cancel)));
         assert!(!fx.iter().any(|e| matches!(e, Effect::StartBrain { .. })));
         assert_eq!(t.mode(), Mode::Idle);
@@ -824,5 +883,83 @@ mod tests {
         t.say("hey claude a");
         t.brain(BrainEvent::Finished { text: "x".repeat(5000), is_error: false, session_id: None, denied: 0 });
         assert_eq!(t.m.ui(t.now).detail.chars().count(), MAX_DETAIL);
+    }
+
+    fn mics(fx: &[Effect]) -> Vec<bool> {
+        fx.iter()
+            .filter_map(|e| match e {
+                Effect::Mic(on) => Some(*on),
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn reads_the_answer_aloud_with_the_mic_off_then_opens_the_follow_up() {
+        let mut t = T::new();
+        t.m.set_speak(true);
+        t.say("hey claude open youtube");
+        let fx = t.finish("YouTube is open.");
+        assert!(fx.contains(&Effect::Speak("YouTube is open.".into())));
+        assert_eq!(mics(&fx), [false], "the notch must not hear itself");
+        let ui = t.m.ui(t.now);
+        assert_eq!((ui.mode, ui.speaking, ui.follow_up), (Mode::Done, true, false));
+
+        // A long answer stays up for as long as it is being read.
+        t.at(60).send(Event::Tick);
+        assert_eq!(t.mode(), Mode::Done);
+
+        let fx = t.send(Event::Spoken);
+        assert_eq!(mics(&fx), [true]);
+        let ui = t.m.ui(t.now);
+        assert_eq!((ui.speaking, ui.follow_up), (false, true));
+        t.send(Event::Tick);
+        assert_eq!(t.mode(), Mode::Idle);
+        // The follow-up window counts from the end of the answer.
+        assert!(t.m.ui(t.now).follow_up);
+        assert!(t.say("and play some music").contains(&start("and play some music", Some(SID))));
+    }
+
+    #[test]
+    fn a_click_a_cancel_or_a_new_command_stops_the_voice() {
+        for event in [Event::ListenRequested, Event::CancelRequested, Event::Typed("open firefox".into())] {
+            let mut t = T::new();
+            t.m.set_speak(true);
+            t.say("hey claude open youtube");
+            t.finish("YouTube is open.");
+            let fx = t.send(event.clone());
+            assert!(fx.contains(&Effect::StopSpeaking), "{event:?}");
+            assert_eq!(mics(&fx), [true], "{event:?}");
+            assert!(!t.m.ui(t.now).speaking);
+            // The stopped speech reporting back changes nothing.
+            assert!(t.send(Event::Spoken).is_empty(), "{event:?}");
+        }
+    }
+
+    #[test]
+    fn pausing_while_speaking_stops_the_voice_and_keeps_the_mic_off() {
+        let mut t = T::new();
+        t.m.set_speak(true);
+        t.say("hey claude open youtube");
+        t.finish("YouTube is open.");
+        let fx = t.send(Event::PauseToggled);
+        assert!(fx.contains(&Effect::StopSpeaking));
+        assert_eq!(mics(&fx), [false]);
+    }
+
+    #[test]
+    fn errors_and_a_silent_notch_say_nothing() {
+        let mut t = T::new();
+        t.m.set_speak(true);
+        t.say("hey claude a");
+        let fx =
+            t.brain(BrainEvent::Finished { text: "Rate limited".into(), is_error: true, session_id: None, denied: 0 });
+        assert!(!fx.iter().any(|e| matches!(e, Effect::Speak(_))));
+
+        let mut t = T::new();
+        t.say("hey claude a");
+        let fx = t.finish("Done.");
+        assert!(!fx.iter().any(|e| matches!(e, Effect::Speak(_) | Effect::Mic(_))));
+        assert!(t.m.ui(t.now).follow_up);
     }
 }

@@ -20,6 +20,7 @@ use crate::island;
 use crate::machine::{Effect, Event, Machine, Mode, Ui};
 use crate::settings;
 use crate::stt::{self, Need, SttEvent};
+use crate::tts;
 
 /// Exit status that makes the systemd unit start the notch again (`RestartForceExitStatus=75`).
 const RESTART_STATUS: i32 = 75;
@@ -29,6 +30,8 @@ pub enum Input {
     Event(Event),
     /// An event of the Claude run with this generation; older runs' events are dropped.
     Brain(u64, BrainEvent),
+    /// The answer with this generation was read aloud (or stopped, or failed).
+    Spoken(u64),
     Ipc(Incoming),
     /// SIGTERM or SIGINT: stop the running command, then quit.
     Quit,
@@ -100,6 +103,10 @@ struct Driver {
     brain: Option<tauri::async_runtime::JoinHandle<()>>,
     waiting: HashMap<u64, oneshot::Sender<bool>>,
     next_id: u64,
+    speaker: Arc<tts::Speaker>,
+    /// Generation of the answer being read aloud, and how to stop it.
+    speech: u64,
+    stop_speech: Option<oneshot::Sender<()>>,
 }
 
 impl Driver {
@@ -113,7 +120,12 @@ impl Driver {
                     Some(Input::Restart) => break true,
                     Some(Input::Config(cfg)) => {
                         machine.set_follow_up(Duration::from_secs(cfg.follow_up_secs));
+                        machine.set_speak(cfg.speak);
+                        let turned_on = cfg.speak && !self.cfg.speak;
                         self.cfg = cfg;
+                        if turned_on {
+                            self.warm_up();
+                        }
                         Vec::new()
                     }
                     Some(input) => self.input(&mut machine, input),
@@ -143,6 +155,9 @@ impl Driver {
     /// `setsid -f` are in their own session and live on. Unanswered approvals are dropped,
     /// which the permission server reads as a denial.
     async fn stop(&mut self) {
+        if let Some(stop) = self.stop_speech.take() {
+            let _ = stop.send(());
+        }
         if let Some(cancel) = self.cancel.take() {
             let _ = cancel.send(());
         }
@@ -160,7 +175,8 @@ impl Driver {
             Input::Brain(generation, event) if generation == self.generation => {
                 machine.handle(Event::Brain(event), now)
             }
-            Input::Brain(..) | Input::Quit | Input::Restart | Input::Config(_) => Vec::new(),
+            Input::Spoken(generation) if generation == self.speech => machine.handle(Event::Spoken, now),
+            Input::Brain(..) | Input::Spoken(_) | Input::Quit | Input::Restart | Input::Config(_) => Vec::new(),
             Input::Ipc(Incoming::Listen) => machine.handle(Event::ListenRequested, now),
             Input::Ipc(Incoming::Cancel) => machine.handle(Event::CancelRequested, now),
             Input::Ipc(Incoming::Pause) => machine.handle(Event::PauseToggled, now),
@@ -232,7 +248,47 @@ impl Driver {
                     let _ = mic.send(on);
                 }
             }
+            Effect::Speak(text) => {
+                self.speech += 1;
+                // Replacing the sender stops an answer still being read.
+                let (stop, stopped) = oneshot::channel();
+                self.stop_speech = Some(stop);
+                let (speaker, voice, tx, generation) =
+                    (self.speaker.clone(), self.cfg.voice.clone(), self.tx.clone(), self.speech);
+                tauri::async_runtime::spawn(async move {
+                    let speak = async {
+                        let samples = tauri::async_runtime::spawn_blocking(move || speaker.synthesize(&text, &voice))
+                            .await
+                            .map_err(|e| e.to_string())??;
+                        tts::play(&samples).await
+                    };
+                    tokio::select! {
+                        result = speak => if let Err(e) = result {
+                            crate::log(&format!("speech: {e}"));
+                        },
+                        _ = stopped => {}
+                    }
+                    let _ = tx.send(Input::Spoken(generation));
+                });
+            }
+            Effect::StopSpeaking => {
+                if let Some(stop) = self.stop_speech.take() {
+                    let _ = stop.send(());
+                }
+                self.speech += 1;
+            }
         }
+    }
+
+    /// Loads the voice model in the background, so the first answer is not late; a problem
+    /// (no model downloaded, …) shows on the notch.
+    fn warm_up(&self) {
+        let (speaker, voice, tx) = (self.speaker.clone(), self.cfg.voice.clone(), self.tx.clone());
+        tauri::async_runtime::spawn_blocking(move || {
+            if let Err(e) = speaker.synthesize("", &voice) {
+                let _ = tx.send(Input::Event(Event::Problem(e)));
+            }
+        });
     }
 
     /// `claude-notch demo <mode>`: shows one look without touching the state machine.
@@ -251,6 +307,7 @@ impl Driver {
             approval: (mode == Mode::Approval).then_some(0),
             paused: false,
             follow_up: false,
+            speaking: false,
         };
         let _ = self.app.emit("notch", ui);
     }
@@ -335,7 +392,13 @@ impl Startup {
             brain: None,
             waiting: HashMap::new(),
             next_id: 0,
+            speaker: Arc::new(tts::Speaker::new(tts::model_dir())),
+            speech: 0,
+            stop_speech: None,
         };
+        if driver.cfg.speak {
+            driver.warm_up();
+        }
         tauri::async_runtime::spawn(driver.run(machine, rx));
         Ok(())
     }
@@ -453,7 +516,8 @@ pub fn run(replaces: Option<u32>) -> ExitCode {
         Err(e) => return fail(format!("own path: {e}")),
     };
 
-    let machine = Machine::new(cfg.wake_phrases.clone(), Duration::from_secs(cfg.follow_up_secs), Instant::now());
+    let mut machine = Machine::new(cfg.wake_phrases.clone(), Duration::from_secs(cfg.follow_up_secs), Instant::now());
+    machine.set_speak(cfg.speak);
     let ui = Arc::new(Mutex::new(machine.ui(Instant::now())));
     let (tx, rx) = mpsc::unbounded_channel();
     let shared = Shared {

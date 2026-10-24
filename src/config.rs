@@ -37,7 +37,7 @@ impl Position {
 pub struct Config {
     /// Phrases that wake the notch when said at the start of an utterance.
     pub wake_phrases: Vec<String>,
-    /// Whisper language code ("id", "en", …), or "auto": per utterance, the most likely of
+    /// Whisper language code ("en", "de", …), or "auto": per utterance, the most likely of
     /// `auto_languages`.
     pub language: String,
     pub auto_languages: Vec<String>,
@@ -51,6 +51,10 @@ pub struct Config {
     /// A Claude run is stopped after this long.
     pub turn_timeout_secs: u64,
     pub sounds: bool,
+    /// Read answers aloud with Kokoro (`scripts/download-model.sh kokoro`).
+    pub speak: bool,
+    /// Kokoro voice, a file in `<data dir>/models/kokoro/voices/`: `af_heart`, `am_michael`, …
+    pub voice: String,
     /// Lowest microphone RMS (0–1) that can count as speech.
     pub vad_threshold: f32,
     pub position: Position,
@@ -59,25 +63,18 @@ pub struct Config {
 impl Default for Config {
     fn default() -> Self {
         Self {
-            wake_phrases: [
-                "hi claude",
-                "hey claude",
-                "hai claude",
-                "halo claude",
-                "hallo claude",
-                "hello claude",
-                "ok claude",
-                "oke claude",
-            ]
-            .map(String::from)
-            .to_vec(),
-            language: "auto".into(),
-            auto_languages: vec!["en".into(), "id".into()],
+            wake_phrases: ["hi claude", "hey claude", "hello claude", "ok claude", "okay claude"]
+                .map(String::from)
+                .to_vec(),
+            language: "en".into(),
+            auto_languages: vec!["en".into()],
             model_path: None,
             claude_bin: "claude".into(),
             follow_up_secs: 60,
             turn_timeout_secs: 300,
             sounds: true,
+            speak: false,
+            voice: "af_heart".into(),
             vad_threshold: 0.012,
             position: Position::default(),
         }
@@ -117,7 +114,7 @@ impl Config {
         }
         if self.language != "auto" && !is_language(&self.language) {
             return Err(format!(
-                "language {:?} must be \"auto\" or a Whisper language code like \"id\"",
+                "language {:?} must be \"auto\" or a Whisper language code like \"en\"",
                 self.language
             ));
         }
@@ -135,6 +132,9 @@ impl Config {
         }
         if !(10..=3600).contains(&self.turn_timeout_secs) {
             return Err("turn_timeout_secs must be between 10 and 3600".into());
+        }
+        if !crate::tts::valid_voice(&self.voice) {
+            return Err(format!("voice {:?} must be a Kokoro voice name like \"af_heart\"", self.voice));
         }
         if !(0.001..=0.5).contains(&self.vad_threshold) {
             return Err("vad_threshold must be between 0.001 and 0.5".into());
@@ -172,7 +172,7 @@ impl Config {
     }
 }
 
-/// A language code Whisper knows ("en", "id", "ms", …).
+/// A language code Whisper knows ("en", "de", "fr", …).
 fn is_language(code: &str) -> bool {
     // Checked before asking Whisper, whose lookup cannot take arbitrary bytes.
     (2..=5).contains(&code.len())
@@ -276,18 +276,22 @@ mod tests {
 
     #[test]
     fn parses_partial_file() {
-        let cfg =
-            Config::parse("language = \"id\"\nfollow_up_secs = 0\nsounds = false\n[position]\nx = 0.2\ny = 40.0\n")
-                .unwrap();
-        assert_eq!(cfg.language, "id");
+        let cfg = Config::parse(
+            "language = \"de\"\nfollow_up_secs = 0\nsounds = false\nspeak = true\nvoice = \"am_michael\"\n[position]\nx = 0.2\ny = 40.0\n",
+        )
+        .unwrap();
+        assert!(cfg.speak);
+        assert_eq!(cfg.voice, "am_michael");
+        assert!(!Config::default().speak, "speaking needs a model download, so it is opt-in");
+        assert_eq!(cfg.language, "de");
         assert_eq!(cfg.follow_up_secs, 0);
         assert!(!cfg.sounds);
         assert_eq!(cfg.position, Position { x: 0.2, y: 40.0 });
         assert_eq!(cfg.claude_bin, "claude");
-        assert_eq!(cfg.speech_languages(), ["id"]);
-        assert_eq!(Config::default().speech_languages(), ["en", "id"]);
-        let three = Config::parse("auto_languages = [\"en\", \"id\", \"ms\"]").unwrap();
-        assert_eq!(three.speech_languages(), ["en", "id", "ms"]);
+        assert_eq!(cfg.speech_languages(), ["de"]);
+        assert_eq!(Config::default().speech_languages(), ["en"]);
+        let three = Config::parse("language = \"auto\"\nauto_languages = [\"en\", \"de\", \"fr\"]").unwrap();
+        assert_eq!(three.speech_languages(), ["en", "de", "fr"]);
     }
 
     #[test]
@@ -297,8 +301,8 @@ mod tests {
             "wake_phrases = []",
             "wake_phrases = [\"...\"]",
             "wake_phrases = [\"one two three four five\"]",
-            "language = \"Indonesian\"",
-            "language = \"ID\"",
+            "language = \"English\"",
+            "language = \"EN\"",
             "language = \"xx\"",
             "auto_languages = []",
             "auto_languages = [\"en\", \"klingon\"]",
@@ -309,6 +313,9 @@ mod tests {
             "follow_up_secs = 601",
             "turn_timeout_secs = 5",
             "vad_threshold = 0.9",
+            "voice = \"\"",
+            "voice = \"../../etc/passwd\"",
+            "voice = \"af_heart.bin\"",
             "vad_threshold = 0.0",
             "position = { x = 1.5, y = 0.0 }",
             "position = { x = 0.5, y = -1.0 }",
@@ -330,7 +337,7 @@ mod tests {
         let dir = temp("save");
         let path = dir.join("sub").join("config.toml");
         let cfg = Config {
-            language: "id".into(),
+            language: "de".into(),
             model_path: Some("/m/ggml.bin".into()),
             position: Position { x: 0.25, y: 12.0 },
             ..Config::default()
@@ -353,14 +360,16 @@ mod tests {
         for live in [
             Config { follow_up_secs: 10, ..running.clone() },
             Config { sounds: false, ..running.clone() },
+            Config { speak: true, ..running.clone() },
+            Config { voice: "am_michael".into(), ..running.clone() },
             Config { turn_timeout_secs: 60, ..running.clone() },
             Config { position: Position { x: 0.1, y: 5.0 }, ..running.clone() },
         ] {
             assert!(!live.needs_restart(&running), "{live:?}");
         }
         for restart in [
-            Config { language: "id".into(), ..running.clone() },
-            Config { auto_languages: vec!["en".into()], ..running.clone() },
+            Config { language: "de".into(), ..running.clone() },
+            Config { language: "auto".into(), auto_languages: vec!["en".into(), "de".into()], ..running.clone() },
             Config { wake_phrases: vec!["yo claude".into()], ..running.clone() },
             Config { vad_threshold: 0.05, ..running.clone() },
             Config { model_path: Some("/x.bin".into()), ..running.clone() },

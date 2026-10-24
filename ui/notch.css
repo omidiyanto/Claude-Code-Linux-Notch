@@ -5,6 +5,7 @@
   --accent: #d97757;
   --danger: #ff7a6b;
   --spring: cubic-bezier(0.34, 1.56, 0.64, 1);
+  --tuck: cubic-bezier(0.55, 0, 0.75, 0.2);
   color-scheme: dark;
 }
 
@@ -41,11 +42,35 @@ body {
   border-radius: 0 0 18px 18px;
   box-shadow: 0 6px 18px rgb(0 0 0 / 0.35);
   overflow: hidden;
+  /* Coming out: drops from the edge with a little overshoot and comes into focus. */
   transition:
     width 0.45s var(--spring),
     height 0.45s var(--spring),
     border-radius 0.45s var(--spring),
-    opacity 0.3s;
+    transform 0.55s var(--spring),
+    opacity 0.2s,
+    filter 0.35s,
+    box-shadow 0.15s;
+}
+
+/* Resting: tucked into the top edge. A few pixels stay on screen, invisible, to catch the pointer. */
+.island.hidden {
+  transform: translate(-50%, calc(-100% + 3px));
+  opacity: 0;
+  filter: blur(6px);
+  /* Going in: speeds up into the edge, and fades only at the end. */
+  transition:
+    width 0.45s var(--spring),
+    height 0.45s var(--spring),
+    border-radius 0.45s var(--spring),
+    transform 0.4s var(--tuck),
+    opacity 0.25s 0.15s,
+    filter 0.35s;
+}
+
+/* Floating away from the edge, it fades where it is. */
+.island.floating.hidden {
+  transform: translateX(-50%) scale(0.92);
 }
 
 #buddy {
@@ -54,10 +79,91 @@ body {
   width: 34px;
   height: 32px;
   image-rendering: pixelated;
+  transform-origin: 50% 100%;
   transition:
     width 0.45s var(--spring),
     height 0.45s var(--spring),
     filter 0.3s;
+}
+
+/* Squash and stretch on top of the pixel animation; only scales and moves, so pixels stay square. */
+.island:not(.hidden):hover[data-mode='idle'] #buddy {
+  animation: wiggle 0.5s ease-in-out;
+}
+
+.island[data-mode='working'] #buddy {
+  animation: bob 0.33s ease-in-out infinite alternate;
+}
+
+.island[data-mode='approval'] #buddy {
+  animation: pulse-buddy 0.7s ease-in-out infinite alternate;
+}
+
+.island[data-mode='done']:not(.speaking) #buddy {
+  animation: jump 0.8s ease-out; /* once, on arrival: the pixel buddy keeps hopping by itself */
+}
+
+.island[data-mode='error'] #buddy {
+  animation: shake 0.45s ease-in-out 2;
+}
+
+.island.speaking #buddy {
+  animation: talk 0.28s ease-in-out infinite alternate;
+}
+
+@keyframes wiggle {
+  30% {
+    transform: scale(1.12, 0.88);
+  }
+  60% {
+    transform: scale(0.94, 1.08) translateY(-2px);
+  }
+}
+
+@keyframes bob {
+  to {
+    transform: scale(1.05, 0.95);
+  }
+}
+
+@keyframes pulse-buddy {
+  to {
+    transform: scale(1.08);
+  }
+}
+
+@keyframes jump {
+  0%,
+  100% {
+    transform: none;
+  }
+  12% {
+    transform: scale(1.12, 0.86);
+  }
+  30% {
+    transform: translateY(-5px) scale(0.92, 1.1);
+  }
+  55% {
+    transform: none;
+  }
+  62% {
+    transform: scale(1.06, 0.94);
+  }
+}
+
+@keyframes shake {
+  25% {
+    transform: translateX(-3px);
+  }
+  75% {
+    transform: translateX(3px);
+  }
+}
+
+@keyframes talk {
+  to {
+    transform: scale(0.97, 1.05);
+  }
 }
 
 .text,
@@ -133,6 +239,13 @@ body {
   -webkit-line-clamp: 2;
   overflow: hidden;
   overflow-wrap: anywhere;
+}
+
+/* Listening: a glow that breathes with the voice (--level is set by the page). */
+.island[data-mode='listening'] {
+  box-shadow:
+    0 6px 18px rgb(0 0 0 / 0.35),
+    0 0 calc(4px + var(--level, 0) * 22px) calc(var(--level, 0) * 4px) rgb(217 119 87 / 0.55);
 }
 
 /* Resting: just the buddy. */
@@ -346,7 +459,9 @@ button:focus-visible {
 
 @media (prefers-reduced-motion: reduce) {
   .island,
+  .island.hidden,
   #buddy {
     transition: none;
+    animation: none !important;
   }
 }

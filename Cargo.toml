@@ -1,8 +1,8 @@
 [package]
 name = "claude-notch"
-version = "0.3.0"
+version = "0.4.0"
 edition = "2024"
-rust-version = "1.88"
+rust-version = "1.92"
 license = "MIT"
 description = "A dynamic-island notch for Linux desktops that hands your voice to Claude Code"
 publish = false
@@ -11,6 +11,9 @@ publish = false
 # GPU speech recognition, passed straight to whisper.cpp.
 cuda = ["whisper-rs/cuda"]
 vulkan = ["whisper-rs/vulkan"]
+# Spoken answers on an NVIDIA GPU: ONNX Runtime's CUDA provider. Needs CUDA 13 and cuDNN 9 at run
+# time, and ships ONNX Runtime's provider libraries next to the binary. Combines with `vulkan`.
+tts-cuda = ["ort/cuda"]
 
 [dependencies]
 tauri = { version = "2.12", features = [] }
@@ -25,6 +28,8 @@ whisper-rs-sys = "0.15"
 libc = "0.2"
 # Same GTK 3 that Tauri runs on, to turn its window into a layer-shell surface.
 gtk = "0.18"
+# Kokoro text to speech. Prebuilt ONNX Runtime, checked against hashes pinned in ort-sys.
+ort = { version = "=2.0.0-rc.15", default-features = false, features = ["std", "download-binaries", "copy-dylibs", "tls-rustls"] }
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }

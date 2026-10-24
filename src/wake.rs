@@ -12,11 +12,6 @@ const MAX_LEADING_WORDS: usize = 2;
 
 /// What Whisper writes for silence, music or background noise.
 const NOISE: &[&str] = &[
-    "terima kasih",
-    "terima kasih telah menonton",
-    "terima kasih sudah menonton",
-    "selamat menonton",
-    "sampai jumpa",
     "thank you",
     "thanks",
     "thanks for watching",
@@ -24,29 +19,12 @@ const NOISE: &[&str] = &[
     "you",
     "bye",
     "music",
-    "musik",
     "applause",
     "subtitles by the amara org community",
 ];
 
 /// A whole command that only means "stop what you are doing".
-const CANCEL: &[&str] = &[
-    "stop",
-    "stop it",
-    "cancel",
-    "never mind",
-    "nevermind",
-    "batal",
-    "batalkan",
-    "berhenti",
-    "hentikan",
-    "sudah",
-    "gak jadi",
-    "nggak jadi",
-    "enggak jadi",
-    "tidak jadi",
-    "ga jadi",
-];
+const CANCEL: &[&str] = &["stop", "stop it", "cancel", "never mind", "nevermind"];
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Heard {
@@ -89,7 +67,7 @@ fn words(text: &str) -> Vec<(usize, String)> {
     out
 }
 
-/// Removes Whisper's annotations: `[BLANK_AUDIO]`, `(musik)`, `*laughs*`, `♪`.
+/// Removes Whisper's annotations: `[BLANK_AUDIO]`, `(music)`, `*laughs*`, `♪`.
 /// An opener without its closer is ordinary text ("5*3").
 fn strip_annotations(text: &str) -> String {
     let mut out = String::with_capacity(text.len());
@@ -163,19 +141,19 @@ mod tests {
     fn wake_phrase_alone() {
         assert_eq!(hear("Hi Claude.", &phrases()), wake(""));
         assert_eq!(hear(" hey claude!! ", &phrases()), wake(""));
-        assert_eq!(hear("Hai, Klod?", &phrases()), wake(""));
+        assert_eq!(hear("Hey, Klod?", &phrases()), wake(""));
     }
 
     #[test]
     fn wake_phrase_with_command_keeps_original_text() {
-        // An Indonesian command after a misheard name.
+        // A command after a misheard name.
         assert_eq!(
-            hear("Hey Cloud, buka Firefox dan putar YouTube.", &phrases()),
-            wake("buka Firefox dan putar YouTube.")
+            hear("Hey Cloud, open Firefox and play YouTube.", &phrases()),
+            wake("open Firefox and play YouTube.")
         );
         assert_eq!(
-            hear("Hi Claude, let's code: buat project todo-api.", &phrases()),
-            wake("let's code: buat project todo-api.")
+            hear("Hi Claude, let's code: new project todo-api.", &phrases()),
+            wake("let's code: new project todo-api.")
         );
         assert_eq!(hear("OK Claude open ~/Projects", &phrases()), wake("open ~/Projects"));
     }
@@ -200,17 +178,9 @@ mod tests {
 
     #[test]
     fn recognition_noise() {
-        for noise in [
-            "",
-            "   ",
-            "[BLANK_AUDIO]",
-            "(musik)",
-            "♪ ♪",
-            "Terima kasih telah menonton!",
-            "Thank you.",
-            "*applause*",
-            "...",
-        ] {
+        for noise in
+            ["", "   ", "[BLANK_AUDIO]", "(music)", "♪ ♪", "Thanks for watching!", "Thank you.", "*applause*", "..."]
+        {
             assert_eq!(hear(noise, &phrases()), Heard::Noise, "{noise:?}");
         }
     }
@@ -224,17 +194,17 @@ mod tests {
 
     #[test]
     fn cancel_is_the_whole_command_only() {
-        for yes in ["Stop.", "batal", "Gak jadi!", "never mind", "Hentikan"] {
+        for yes in ["Stop.", "Cancel!", "never mind", "Stop it"] {
             assert!(is_cancel(yes), "{yes}");
         }
-        for no in ["stop the music", "batalkan meeting besok", "", "play"] {
+        for no in ["stop the music", "cancel tomorrow's meeting", "", "play"] {
             assert!(!is_cancel(no), "{no}");
         }
     }
 
     #[test]
     fn unclosed_annotation_is_text() {
-        assert_eq!(hear("Hey Claude hitung 5*3", &phrases()), wake("hitung 5*3"));
+        assert_eq!(hear("Hey Claude compute 5*3", &phrases()), wake("compute 5*3"));
         assert_eq!(hear("Hi Claude (open firefox", &phrases()), wake("open firefox"));
         assert_eq!(hear("Hi Claude [ok] open (music) firefox", &phrases()), wake("open  firefox"));
     }

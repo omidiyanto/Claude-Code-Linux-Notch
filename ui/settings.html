@@ -141,9 +141,8 @@
               <label>
                 <span class="label">Spoken language <em class="restart">needs a restart</em></span>
                 <select id="language">
-                  <option value="auto">Automatic: English or Indonesian</option>
                   <option value="en">English</option>
-                  <option value="id">Indonesian</option>
+                  <option value="auto">Automatic: the languages in auto_languages</option>
                 </select>
               </label>
               <label>
@@ -177,10 +176,17 @@
           </div>
 
           <div class="card grid-2">
-            <label class="switch">
-              <input id="sounds" type="checkbox" />
-              <span>Sound effects</span>
-            </label>
+            <div class="stack">
+              <label class="switch">
+                <input id="sounds" type="checkbox" />
+                <span>Sound effects</span>
+              </label>
+              <label class="switch">
+                <input id="speak" type="checkbox" />
+                <span>Read answers aloud</span>
+              </label>
+              <small class="hint">Kokoro, on this computer. Get the voice with scripts/download-model.sh kokoro.</small>
+            </div>
             <div class="row">
               <span>Notch position: drag the notch to move it.</span>
               <button type="button" id="reset-position">Back to the top centre</button>

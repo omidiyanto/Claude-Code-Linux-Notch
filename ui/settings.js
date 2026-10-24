@@ -217,6 +217,7 @@ function fillNotch() {
   $('follow-up').value = n.follow_up_secs;
   $('timeout').value = n.turn_timeout_secs;
   $('sounds').checked = n.sounds;
+  $('speak').checked = n.speak;
   $('claude-bin').value = n.claude_bin;
   $('restart-banner').hidden = !view.restart_needed;
 }
@@ -237,6 +238,7 @@ $('save-notch').addEventListener('click', (event) =>
       follow_up_secs: Number.parseInt($('follow-up').value, 10),
       turn_timeout_secs: Number.parseInt($('timeout').value, 10),
       sounds: $('sounds').checked,
+      speak: $('speak').checked,
       claude_bin: $('claude-bin').value.trim(),
     };
     const restart = await invoke('save_notch', { notch });

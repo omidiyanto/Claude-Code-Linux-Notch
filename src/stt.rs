@@ -7,14 +7,9 @@ use std::time::Duration;
 
 use whisper_rs::{FullParams, SamplingStrategy, WhisperContext, WhisperContextParameters, WhisperState};
 
-/// A sentence in the language being recognized, with the names Whisper tends to misspell.
-/// A list of bare names was tried and made things worse ("Claude" + "Chromium" became "Chroude").
-fn prompt(language: &str) -> &'static str {
-    match language {
-        "id" | "ms" => "Hai Claude, buka Chromium dan putar lagu di YouTube.",
-        _ => "Hey Claude, open Chromium and play a song on YouTube.",
-    }
-}
+/// A sentence with the names Whisper tends to misspell. A list of bare names was tried and made
+/// things worse ("Claude" + "Chromium" became "Chroude").
+const PROMPT: &str = "Hey Claude, open Chromium and play a song on YouTube.";
 /// whisper.cpp ignores audio shorter than one second.
 const MIN_SAMPLES: usize = 17_600;
 const NO_SPEECH: f32 = 0.6;
@@ -71,12 +66,9 @@ fn probability(probs: &[f32], lang: &str) -> f32 {
 }
 
 /// The allowed language Whisper finds most likely. Left free to choose among all ~100, it may
-/// hear accented English as Indonesian or Malay and then write a translation instead of what was
-/// said. Malay counts toward Indonesian: the two are close enough that Whisper mixes them up.
+/// hear accented English as another language and then write a translation instead of what was said.
 pub fn pick_language(prob: impl Fn(&str) -> f32, allowed: &[String]) -> String {
-    let folds_malay = !allowed.iter().any(|l| l == "ms");
-    let score = |lang: &str| prob(lang) + if lang == "id" && folds_malay { prob("ms") } else { 0.0 };
-    allowed.iter().max_by(|a, b| score(a).total_cmp(&score(b))).cloned().unwrap_or_else(|| "en".into())
+    allowed.iter().max_by(|a, b| prob(a).total_cmp(&prob(b))).cloned().unwrap_or_else(|| "en".into())
 }
 
 #[derive(Debug)]
@@ -141,7 +133,7 @@ impl Stt {
         p.set_suppress_blank(true);
         p.set_suppress_nst(true);
         p.set_no_speech_thold(NO_SPEECH);
-        p.set_initial_prompt(prompt(&language));
+        p.set_initial_prompt(PROMPT);
         p.set_audio_ctx(audio_ctx(audio.len()));
         self.state.full(p, audio).map_err(|e| format!("speech recognition: {e}"))?;
         let mut text = String::new();
@@ -395,11 +387,11 @@ mod tests {
         assert_eq!(Need::from_u8(200), Need::Wake);
     }
 
-    /// The default model, or the one in `CLAUDE_NOTCH_TEST_MODEL`, choosing between English and Indonesian.
+    /// The default model, or the one in `CLAUDE_NOTCH_TEST_MODEL`, recognizing English.
     fn test_stt() -> Stt {
         let model = std::env::var_os("CLAUDE_NOTCH_TEST_MODEL")
             .map_or_else(|| crate::config::Config::default().model_path(), PathBuf::from);
-        Stt::load(&model, vec!["en".into(), "id".into()]).unwrap()
+        Stt::load(&model, vec!["en".into()]).unwrap()
     }
 
     fn probs(table: &[(&str, f32)]) -> impl Fn(&str) -> f32 {
@@ -417,36 +409,22 @@ mod tests {
 
     #[test]
     fn picks_the_most_likely_allowed_language() {
-        let en_id: Vec<String> = vec!["en".into(), "id".into()];
-        assert_eq!(pick_language(probs(&[("en", 0.6), ("id", 0.3)]), &en_id), "en");
+        let en_de: Vec<String> = vec!["en".into(), "de".into()];
+        assert_eq!(pick_language(probs(&[("en", 0.6), ("de", 0.3)]), &en_de), "en");
+        assert_eq!(pick_language(probs(&[("en", 0.3), ("de", 0.6)]), &en_de), "de");
         // Accented English that Whisper rates as French first: still never French.
-        assert_eq!(pick_language(probs(&[("fr", 0.9), ("en", 0.06), ("id", 0.03)]), &en_id), "en");
-        // Malay counts toward Indonesian…
-        assert_eq!(pick_language(probs(&[("en", 0.4), ("id", 0.3), ("ms", 0.25)]), &en_id), "id");
-        // …unless Malay is allowed on its own.
-        let three: Vec<String> = vec!["en".into(), "id".into(), "ms".into()];
-        assert_eq!(pick_language(probs(&[("en", 0.4), ("id", 0.3), ("ms", 0.25)]), &three), "en");
-        assert_eq!(pick_language(probs(&[]), &["id".to_string()]), "id");
+        assert_eq!(pick_language(probs(&[("fr", 0.9), ("en", 0.06), ("de", 0.03)]), &en_de), "en");
+        assert_eq!(pick_language(probs(&[]), &["de".to_string()]), "de");
         assert_eq!(pick_language(probs(&[("en", 1.0)]), &[]), "en");
     }
 
     #[test]
     fn probability_reads_whispers_table() {
         let mut table = vec![0.0; 100];
-        table[usize::try_from(whisper_rs::get_lang_id("id").unwrap()).unwrap()] = 0.7;
-        assert!((probability(&table, "id") - 0.7).abs() < f32::EPSILON);
+        table[usize::try_from(whisper_rs::get_lang_id("de").unwrap()).unwrap()] = 0.7;
+        assert!((probability(&table, "de") - 0.7).abs() < f32::EPSILON);
         assert!(probability(&table, "xx").abs() < f32::EPSILON);
         assert!(probability(&[], "en").abs() < f32::EPSILON);
-    }
-
-    #[test]
-    #[ignore = "needs the downloaded speech model and espeak-ng: cargo test -- --ignored"]
-    fn detects_english_and_indonesian() {
-        let mut stt = test_stt();
-        let en = speak("en-us", "Can you play the song Mary on a Cross in the tab that is open right now?");
-        let id = speak("id", "Tolong putar lagu yang tadi di tab yang sedang terbuka sekarang.");
-        assert_eq!(stt.detect(&en).unwrap(), "en");
-        assert_eq!(stt.detect(&id).unwrap(), "id");
     }
 
     #[test]
@@ -460,13 +438,6 @@ mod tests {
     fn hears_wake_phrase_and_command_end_to_end() {
         let Heard::Wake(command) = hear_spoken("en-us", "Hey Claude, open Firefox.") else { panic!("no wake") };
         assert_eq!(wake::normalize(&command), ["open", "firefox"]);
-    }
-
-    #[test]
-    #[ignore = "needs the downloaded speech model and espeak-ng: cargo test -- --ignored"]
-    fn hears_indonesian_end_to_end() {
-        let Heard::Wake(command) = hear_spoken("id", "Halo Claude, buka YouTube.") else { panic!("no wake") };
-        assert_eq!(wake::normalize(&command), ["buka", "youtube"]);
     }
 
     #[test]
